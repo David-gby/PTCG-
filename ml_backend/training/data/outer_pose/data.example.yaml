@@ -1,0 +1,8 @@
+path: .
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: card
+kpt_shape: [4, 3]
+flip_idx: [1, 0, 3, 2]
