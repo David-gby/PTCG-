@@ -1,0 +1,27 @@
+[Unit]
+Description=CardScope enterprise card centering platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cardscope
+Group=cardscope
+WorkingDirectory=/opt/cardscope/current
+EnvironmentFile=/etc/cardscope/cardscope.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PTCG_RUNTIME_DIR=/var/cache/cardscope/runtime
+Environment=YOLO_CONFIG_DIR=/var/cache/cardscope/yolo
+Environment=MPLCONFIGDIR=/var/cache/cardscope/matplotlib
+ExecStart=/opt/cardscope/venv/bin/python /opt/cardscope/current/platform_server.py --host 127.0.0.1 --port 8765 --workspace /var/lib/cardscope/platform_workspace --public-base-url ${CARDSCOPE_PUBLIC_BASE_URL} --instance-id server-production --no-browser
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

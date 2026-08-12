@@ -19,7 +19,7 @@ from .measurements import centering_measurements
 
 
 ENGINE_NAME = "ptcg_ml_prelabel"
-ENGINE_VERSION = "3"
+ENGINE_VERSION = "5"
 RECTIFIED_WIDTH = 630
 RECTIFIED_HEIGHT = 880
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

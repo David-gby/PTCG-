@@ -557,6 +557,7 @@
     nodes.upload.classList.add("hidden"); nodes.processing.classList.add("hidden"); nodes.result.classList.remove("hidden");
     $("resultFilename").textContent = inspection.filename;
     const isReferenceRegistration = prediction.measurement_mode === "reference_registration";
+    const referenceView = window.CardScopeReferenceResult?.getReferenceRegistrationView(prediction) || null;
     $("detectionModeLabel").textContent = isReferenceRegistration ? "参考图配准（标准图对比）" : "内外框检测";
     const jsonExport = $("exportResultJson");
     jsonExport.classList.toggle("hidden", !inspection.result_json_url);
@@ -572,6 +573,7 @@
     window.requestAnimationFrame(() => { state.outerZoom?.fit(); state.innerZoom?.fit(); });
     $("outerDetectionState").textContent = prediction.outer_corners ? "已检测" : "检测失败";
     $("outerDetectionState").className = prediction.outer_corners ? "detected" : "failed";
+    nodes.rectifiedStage.querySelectorAll("[data-edge]").forEach((line) => { line.hidden = Boolean(referenceView); });
     const hasInner = Boolean(centers && pair);
     if (prediction.outer_corners) {
       setResultImage(nodes.rectifiedImage, resultImageUrl(inspection, "rectified"));
@@ -579,7 +581,23 @@
       nodes.rectifiedImage.dataset.cardscopeSource = "";
       nodes.rectifiedImage.removeAttribute("src");
     }
-    if (hasInner) {
+    if (referenceView) {
+      setMetric("leftValue", referenceView.horizontalPair.left); setMetric("rightValue", referenceView.horizontalPair.right);
+      setMetric("topValue", referenceView.verticalPair.top); setMetric("bottomValue", referenceView.verticalPair.bottom);
+      $("horizontalRatio").style.width = `${referenceView.horizontalPair.left}%`;
+      $("verticalRatio").style.width = `${referenceView.verticalPair.top}%`;
+      $("verdictText").textContent = referenceView.verdictText;
+      $("verdictHint").textContent = referenceView.hint;
+      $("verdictIcon").textContent = referenceView.icon;
+      $("verdictIcon").className = `verdict-icon ${referenceView.iconClass}`;
+      $("confidenceValue").textContent = referenceView.confidenceText;
+      $("deviationValue").textContent = referenceView.deviationText;
+      const confirmable = inspection.state === "completed";
+      $("confirmButton").disabled = !confirmable;
+      $("confirmButton").textContent = inspection.state === "confirmed" ? "本张已确认" : "配准结果正确，确认本张";
+      $("innerDetectionState").textContent = referenceView.innerStatus;
+      $("innerDetectionState").className = "detected";
+    } else if (hasInner) {
       C.renderLines(nodes.rectifiedStage, "data-edge", centers);
       setMetric("leftValue", pair.left); setMetric("rightValue", pair.right);
       setMetric("topValue", pair.top); setMetric("bottomValue", pair.bottom);
@@ -631,7 +649,7 @@
     scheduleNeighborPrefetch(inspection.id);
   }
 
-  function setMetric(id, value) { $(id).textContent = Number(value).toFixed(1); }
+    function setMetric(id, value) { $(id).textContent = Number(value).toFixed(2); }
 
   function resetInspect() {
     state.current = null; state.batch = []; state.batchIndex = -1;
@@ -810,7 +828,7 @@
   }
 
   function stateText(value) { return ({ completed: "待确认", confirmed: "已确认", feedback_pending: "反馈待审核", feedback_approved: "已进入训练池", feedback_needs_annotation: "需高级标注", feedback_discarded: "样本未采用", feedback_rejected: "反馈已驳回", detection_failed: "检测失败" })[value] || value; }
-  function formatPair(pair) { return pair ? `左右 ${Number(pair.left).toFixed(1)} / ${Number(pair.right).toFixed(1)}` : "未获得居中度"; }
+    function formatPair(pair) { return pair ? `左右 ${Number(pair.left).toFixed(2)} / ${Number(pair.right).toFixed(2)}` : "未获得居中度"; }
   function issueName(value) { return ({ inner_frame_wrong: "内框问题", outer_frame_wrong: "外框问题" })[value] || value; }
   function escapeHtml(value) { const node = document.createElement("span"); node.textContent = String(value); return node.innerHTML; }
 

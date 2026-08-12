@@ -1394,7 +1394,7 @@ class PlatformService:
             )
             sample = imported["sample"]
             prelabel = self.store.generate_prelabel(
-                tenant["project_id"], sample["id"], "gx_current"
+                tenant["project_id"], sample["id"], "gx_current", force_recompute=True
             )
         except StudioError as exc:
             raise PlatformError(exc.status, exc.code, exc.message, exc.details) from exc

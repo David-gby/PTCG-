@@ -1,0 +1,2 @@
+id,image,width,height,left,right,top,bottom,split,source
+example_card,examples/expected_output/unified/rectified_card.jpg,630,880,0.040402,0.960556,0.029009,0.971776,train,example

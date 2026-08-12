@@ -250,6 +250,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             "/assets/login.js": "login.js",
             "/assets/admin-login.js": "admin_login.js",
             "/assets/enterprise.js": "enterprise.js",
+            "/assets/reference_result_view.js": "reference_result_view.js",
             "/assets/admin.js": "admin.js",
         }
         target = mapping.get(name)

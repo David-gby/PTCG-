@@ -78,12 +78,37 @@ def _decode_and_rectify(payload: bytes, code_prefix: str) -> tuple[np.ndarray, n
     return image, rectified, result
 
 
+def _decode_reference_card(payload: bytes) -> np.ndarray:
+    """Decode a standard card asset without running physical-card detection.
+
+    Reference images are already tightly cropped to the card canvas, unlike a
+    photographed card. Treating them as a photograph makes the registration
+    depend on an unnecessary outer-frame detection that often fails for a
+    normal opaque PNG export.
+    """
+    _require_vision_runtime()
+    image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise RegistrationInputError("REFERENCE_IMAGE_UNREADABLE", "标准图无法读取。")
+    if image.ndim == 2:
+        return np.repeat(image[:, :, np.newaxis], 3, axis=2)
+    if image.ndim != 3 or image.shape[2] not in (3, 4):
+        raise RegistrationInputError("REFERENCE_IMAGE_INVALID", "标准图格式无效。")
+    if image.shape[2] == 3:
+        return image
+
+    bgr = image[:, :, :3].astype(np.float32)
+    alpha = image[:, :, 3:4].astype(np.float32) / 255.0
+    white = np.full_like(bgr, 255.0)
+    return np.clip(bgr * alpha + white * (1.0 - alpha), 0, 255).astype(np.uint8)
+
+
 def run_reference_registration(*, capture_png: bytes, reference_png: bytes) -> tuple[dict, dict]:
     """Register a user-uploaded standard image against a user-uploaded card photo."""
     validate_pair(capture_png=capture_png, reference_png=reference_png)
     _require_vision_runtime()
     _, capture_rectified, capture_result = _decode_and_rectify(capture_png, "CAPTURE")
-    _, reference_rectified, reference_result = _decode_and_rectify(reference_png, "REFERENCE")
+    reference_rectified = _decode_reference_card(reference_png)
     registration, debug = detect_automatic_reference_registration(
         reference_rectified,
         capture_rectified,
@@ -105,7 +130,6 @@ def run_reference_registration(*, capture_png: bytes, reference_png: bytes) -> t
         "reference_rectified": reference_rectified,
         "registration_overlay": make_reference_registration_overlay(capture_rectified, registration, debug),
         "capture_model_result": capture_result,
-        "reference_model_result": reference_result,
     }
     return registration, assets
 

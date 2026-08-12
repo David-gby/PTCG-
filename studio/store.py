@@ -758,8 +758,13 @@ class StudioStore:
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
         _, entries = self._read_consistency_entries(engine_cache_key, layout_id, fingerprint)
         for entry in entries:
-            if entry.get("normalized_sha256") == normalized_sha256 and isinstance(entry.get("candidate"), dict):
-                return copy.deepcopy(entry["candidate"]), entry, "exact_normalized_image"
+            candidate = entry.get("candidate")
+            if (
+                entry.get("normalized_sha256") == normalized_sha256
+                and isinstance(candidate, dict)
+                and candidate.get("status") != "unavailable"
+            ):
+                return copy.deepcopy(candidate), entry, "exact_normalized_image"
         for entry in entries:
             if visual_fingerprints_match(fingerprint, entry.get("visual_fingerprint")):
                 payload = entry.get("inner_payload")
@@ -807,15 +812,25 @@ class StudioStore:
                 raise StudioError(500, "CORRUPT_PRELABEL", "Stored pre-label provenance is invalid.")
             return value
 
-    def generate_prelabel(self, project_id: str, sample_id: str, layout_id: Any) -> dict[str, Any]:
+    def generate_prelabel(
+        self,
+        project_id: str,
+        sample_id: str,
+        layout_id: Any,
+        *,
+        force_recompute: bool = False,
+    ) -> dict[str, Any]:
         if not isinstance(layout_id, str) or not layout_id.strip() or len(layout_id) > 128:
             raise StudioError(422, "INVALID_LAYOUT_ID", "layout_id must be non-empty text up to 128 characters.")
         layout_id = layout_id.strip()
         cached = self.get_prelabel(project_id, sample_id)
         if (
+            not force_recompute
+            and
             cached is not None
             and cached.get("layout_id") == layout_id
             and cached.get("engine_cache_key") == _local_prelabel_cache_key()
+            and cached.get("status") != "unavailable"
         ):
             return cached
 
@@ -839,14 +854,19 @@ class StudioStore:
         # The OpenCV pipeline is deliberately outside the storage lock. Only
         # one local pre-label job runs at a time to bound CPU and memory use.
         with self._prelabel_lock:
-            exact_candidate, matched_entry, consistency_mode = self._cached_candidate(
-                normalized_sha256, engine_cache_key, layout_id, fingerprint
-            )
-            candidate = exact_candidate or _run_local_prelabel(normalized, layout_id)
+            if force_recompute:
+                matched_entry = None
+                consistency_mode = "fresh_inference"
+                candidate = _run_local_prelabel(normalized, layout_id)
+            else:
+                exact_candidate, matched_entry, consistency_mode = self._cached_candidate(
+                    normalized_sha256, engine_cache_key, layout_id, fingerprint
+                )
+                candidate = exact_candidate or _run_local_prelabel(normalized, layout_id)
             canonical_normalized_sha256 = (
                 matched_entry.get("normalized_sha256") if matched_entry is not None else normalized_sha256
             )
-            if matched_entry is not None and consistency_mode == "verified_visual_duplicate":
+            if not force_recompute and matched_entry is not None and consistency_mode == "verified_visual_duplicate":
                 payload = matched_entry.get("inner_payload")
                 if isinstance(payload, dict):
                     candidate = self._apply_inner_consistency_payload(candidate, payload)
@@ -860,7 +880,13 @@ class StudioStore:
                     fingerprint=fingerprint,
                     candidate=candidate,
                 )
-            elif matched_entry is None:
+            elif (
+                not force_recompute
+                and
+                matched_entry is None
+                and isinstance(candidate, dict)
+                and candidate.get("status") != "unavailable"
+            ):
                 matched_entry = self._write_consistency_entry(
                     normalized_sha256=normalized_sha256,
                     engine_cache_key=engine_cache_key,
