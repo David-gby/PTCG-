@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ptcg.local/schemas/annotations-jsonl-row-v1.json",
+  "title": "PTCG annotations.jsonl row",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sample_id", "file_name", "sha256", "image", "status", "outer", "inner", "assessment", "classification", "custom_metadata", "annotation"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "sample_id": {"type": "string"},
+    "file_name": {"type": "string"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "image": {"type": "object", "required": ["width", "height"]},
+    "status": {"enum": ["unlabeled", "in_progress", "accepted", "review", "rejected"]},
+    "outer": {"type": "object"},
+    "inner": {"type": "object"},
+    "assessment": {"type": "object"},
+    "classification": {"type": "object"},
+    "custom_metadata": {"type": "object"},
+    "annotation": {"type": "object"}
+  }
+}

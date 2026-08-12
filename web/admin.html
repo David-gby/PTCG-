@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CardScope · 反馈审核台</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=0.5.0">
+</head>
+<body>
+  <div class="app-shell admin-shell">
+    <aside class="sidebar">
+      <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"></span><span>CardScope</span></div>
+      <nav class="nav-list">
+        <button class="nav-item selected" data-admin-view="feedback"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>反馈审核</button>
+        <button class="nav-item" data-admin-view="inspections" data-owner-only><svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM7 9h3M7 13h6M16 9h1M16 13h1"/></svg>检测记录</button>
+        <button class="nav-item" data-admin-view="training" data-owner-only><svg viewBox="0 0 24 24"><path d="M5 19h14M7 16l3-4 3 2 4-7M16 7h2v2M6 5h12v14H6z"/></svg>自动训练</button>
+        <button class="nav-item" data-admin-view="tenants" data-owner-only><svg viewBox="0 0 24 24"><path d="M4 20v-9h10v9M7 11V5h10v15M10 8h1M14 8h1M8 15h2"/></svg>企业管理</button>
+        <button class="nav-item" data-admin-view="admins" data-owner-only><svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19v-2a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4v2M16 8h5M18.5 5.5v5"/></svg>管理员管理</button>
+      </nav>
+      <div class="sidebar-note"><strong>训练安全门</strong><span>企业反馈不会自动训练；必须由管理员审核。</span></div>
+      <div class="sidebar-foot"><div class="account-avatar">管</div><div><strong id="adminName">平台管理员</strong><span id="adminRoleLabel">内部管理端</span></div><button id="adminLogout" class="logout-button hidden" type="button">退出</button></div>
+    </aside>
+    <main class="main-content admin-main">
+      <header class="page-header">
+        <div><h1 id="adminViewTitle">模型反馈审核台</h1><p id="adminViewSubtitle">这里只接收检测线位置错误的反馈；居中度超标但检测线正确的卡牌不会自动进入</p></div>
+        <div class="header-actions">
+          <button id="refreshFeedback" class="button quiet">刷新反馈</button>
+          <button id="refreshInspections" class="button quiet hidden">刷新记录</button>
+          <button id="refreshTraining" class="button quiet hidden">刷新训练状态</button>
+          <label id="historyExportOption" class="history-export-option" data-owner-only><input id="includeHistory" type="checkbox" checked><span>加入历史内外框数据</span><select id="historyLimit"><option value="50">各 50 张</option><option value="100" selected>各 100 张</option></select></label>
+          <button id="exportTraining" class="button primary" data-owner-only>批量导出训练数据</button>
+          <button id="exportBundle" class="button quiet" data-owner-only>导出审核归档</button>
+          <button id="createTenantButton" class="button primary hidden">新增企业</button>
+          <button id="createAdminButton" class="button primary hidden">新增标注管理员</button>
+        </div>
+      </header>
+      <section id="feedbackAdminView">
+        <div id="adminNotice" class="admin-notice hidden" role="status" aria-live="polite"></div>
+        <section class="summary-strip">
+          <div><span>累计检测</span><strong id="sumInspections">0</strong></div>
+          <div><span>企业已确认</span><strong id="sumConfirmed">0</strong></div>
+          <div><span>待审核</span><strong id="sumPending">0</strong></div>
+          <div><span>已进入训练池</span><strong id="sumApproved">0</strong></div>
+        </section>
+        <section class="admin-workbench">
+          <aside class="feedback-queue">
+            <div class="queue-toolbar"><strong>模型问题反馈</strong><select id="statusFilter"><option value="pending">待审核</option><option value="">全部</option><option value="approved">已批准</option><option value="needs_annotation">需高级标注</option><option value="discarded">已舍弃</option><option value="rejected">已驳回</option></select></div>
+            <div id="feedbackList" class="feedback-list"></div>
+          </aside>
+          <article id="reviewPanel" class="review-panel empty">
+            <div id="reviewEmpty" class="empty-state"><span>⌁</span><h2>选择一条模型问题反馈</h2><p>只有企业完成反馈表单并收到反馈编号后，样本才会显示在左侧。</p></div>
+            <div id="reviewContent" class="hidden">
+              <header class="review-header"><div><h2 id="reviewFilename">—</h2><p><span id="reviewTenant">—</span> · <span id="reviewTime">—</span></p></div><div class="review-header-actions"><span id="reviewStatus" class="status-label">待审核</span><button id="resetAnnotations" class="button quiet compact" type="button">恢复模型结果</button><button id="toggleAnnotationMode" class="button quiet compact" type="button">全屏精细标注</button></div></header>
+              <div id="reviewActionStatus" class="review-action-status hidden" role="status" aria-live="polite"></div>
+              <div class="review-body">
+                <section class="admin-preview">
+                  <div class="annotation-help"><strong>精细标注</strong><span>滚轮缩放 · Shift/中键拖动平移 · 点击红线后方向键每次微调 0.1 px，Shift + 方向键每次 1 px</span></div>
+                  <div class="admin-dual-preview">
+                    <figure><figcaption><div><strong>外框标注</strong><span>拖动绿色角点贴合卡牌物理边缘</span></div><div class="zoom-actions"><button id="outerZoomOut" type="button" aria-label="缩小外框图">−</button><button id="outerFit" type="button">适合</button><button id="outerZoomIn" type="button" aria-label="放大外框图">＋</button><output id="outerZoomText">100%</output></div></figcaption>
+                      <div class="annotation-viewport editable-outer" id="adminOuterStage" tabindex="0" aria-label="外框标注画布">
+                        <div class="annotation-surface" id="adminOuterSurface">
+                          <img id="adminOuterImage" alt="外框人工标注原图" draggable="false">
+                          <svg id="adminOuterOverlay" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points=""/><circle data-outer-corner="0"/><circle data-outer-corner="1"/><circle data-outer-corner="2"/><circle data-outer-corner="3"/></svg>
+                        </div>
+                      </div>
+                    </figure>
+                    <figure><figcaption><div><strong>内框标注</strong><span>直接拖动红线贴合印刷内框</span></div><div class="zoom-actions"><button id="innerZoomOut" type="button" aria-label="缩小内框图">−</button><button id="innerFit" type="button">适合</button><button id="innerZoomIn" type="button" aria-label="放大内框图">＋</button><output id="innerZoomText">100%</output></div></figcaption>
+                      <div class="annotation-viewport editable" id="adminInnerStage" tabindex="0" aria-label="内框标注画布">
+                        <div class="annotation-surface" id="adminInnerSurface">
+                          <img id="adminInnerImage" alt="内框人工标注校正图" draggable="false">
+                          <div class="detect-line inner-line vertical" data-admin-edge="left"></div>
+                          <div class="detect-line inner-line vertical" data-admin-edge="right"></div>
+                          <div class="detect-line inner-line horizontal" data-admin-edge="top"></div>
+                          <div class="detect-line inner-line horizontal" data-admin-edge="bottom"></div>
+                        </div>
+                      </div>
+                    </figure>
+                  </div>
+                  <div class="line-legend"><span><i class="legend-line green"></i>人工外框四角</span><span><i class="legend-line red"></i>人工内框四线</span></div>
+                </section>
+                <section class="review-fields">
+                  <div><span class="field-label">企业标记的问题</span><div id="reviewTags" class="tag-list"></div></div>
+                  <div><span class="field-label">企业说明</span><p id="reviewNotes" class="review-copy">—</p></div>
+                  <fieldset><legend>外框四角点（原图坐标）</legend><div id="adminOuterControls" class="outer-correction-controls"></div><button id="refreshRectification" class="button quiet compact" type="button">应用外框并刷新内框图</button></fieldset>
+                  <fieldset><legend>内框四条线（校正图 630 × 880）</legend><div id="adminCorrectionControls" class="correction-controls"></div></fieldset>
+                  <label class="textarea-field">审核备注<textarea id="adminReviewNotes" maxlength="2000" placeholder="记录判断依据或后续处理要求"></textarea></label>
+                  <div id="outerWarning" class="warning-box hidden">企业标记了外框问题：请拖动绿色角点并刷新校正图，再确认红色内框线。</div>
+                </section>
+              </div>
+              <footer class="review-actions">
+                <span class="review-actions-hint">处理后状态会立即保存；审核通过还会验证训练池文件是否生成成功。</span>
+                <button id="deleteFeedback" class="button destructive" type="button" data-owner-only>永久删除样本</button>
+                <button id="reopenFeedback" class="button danger-quiet hidden" type="button" data-owner-only>退回待审核</button>
+                <button id="rejectFeedback" class="button danger-quiet" type="button" data-owner-only>驳回</button>
+                <button id="needsAnnotation" class="button quiet" type="button" data-owner-only>转高级标注</button>
+                <button id="discardFeedback" class="button danger-quiet hidden" type="button" data-annotator-only>舍弃本样本</button>
+                <button id="approveFeedback" class="button primary" type="button">审核通过并加入训练池</button>
+              </footer>
+            </div>
+          </article>
+        </section>
+      </section>
+      <section id="inspectionAdminView" class="hidden">
+        <section class="summary-strip">
+          <div><span>累计检测</span><strong id="sumAllInspections">0</strong></div>
+          <div><span>企业已确认</span><strong id="sumInspectionConfirmed">0</strong></div>
+          <div><span>收到问题反馈</span><strong id="sumInspectionFeedback">0</strong></div>
+          <div><span>检测未完成</span><strong id="sumInspectionFailed">0</strong></div>
+        </section>
+        <section class="inspection-admin-workbench">
+          <aside class="inspection-browser">
+            <div class="inspection-filter-bar">
+              <select id="inspectionTenantFilter" aria-label="按企业筛选"><option value="">全部企业</option></select>
+              <select id="inspectionStateFilter" aria-label="按状态筛选"><option value="">全部状态</option><option value="completed">待企业确认</option><option value="confirmed">企业已确认</option><option value="feedback">已提交反馈</option><option value="detection_failed">检测失败</option></select>
+              <input id="inspectionSearch" type="search" maxlength="160" placeholder="搜索文件名">
+            </div>
+            <div id="inspectionList" class="inspection-list"></div>
+            <div id="inspectionListEmpty" class="tenant-empty hidden">当前筛选条件下没有检测记录。</div>
+          </aside>
+          <article id="inspectionResultPanel" class="inspection-result-panel empty">
+            <div id="inspectionResultEmpty" class="empty-state"><span>⌕</span><h2>选择一条检测记录</h2><p>这里会显示企业检测过的内外框、居中度和反馈状态。</p></div>
+            <div id="inspectionResultContent" class="hidden">
+              <header class="review-header"><div><h2 id="inspectionResultFilename">—</h2><p><span id="inspectionResultTenant">—</span> · <span id="inspectionResultTime">—</span></p></div><div class="review-header-actions"><span id="inspectionResultState" class="status-label">—</span><button id="openInspectionFeedback" class="button quiet compact hidden" type="button">转到反馈审核</button></div></header>
+              <div class="inspection-detail-body">
+                <section class="inspection-detail-preview">
+                  <div class="annotation-help"><strong>企业检测结果复核</strong><span>滚轮缩放 · 按住左键拖动 · 绿色为物理外框，红色为印刷内框</span></div>
+                  <div class="inspection-detail-grid">
+                    <figure><figcaption><div><strong>外框检测</strong><span>企业上传原图</span></div><div class="zoom-actions"><button id="recordOuterZoomOut" type="button">−</button><button id="recordOuterFit" type="button">适合</button><button id="recordOuterZoomIn" type="button">＋</button><output id="recordOuterZoomText">100%</output></div></figcaption>
+                      <div id="recordOuterViewport" class="annotation-viewport inspection-detail-viewport" tabindex="0"><div id="recordOuterSurface" class="annotation-surface"><img id="recordOuterImage" alt="企业检测原图"><svg id="recordOuterOverlay" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points=""/></svg></div></div>
+                    </figure>
+                    <figure><figcaption><div><strong>内框检测</strong><span>透视校正结果</span></div><div class="zoom-actions"><button id="recordInnerZoomOut" type="button">−</button><button id="recordInnerFit" type="button">适合</button><button id="recordInnerZoomIn" type="button">＋</button><output id="recordInnerZoomText">100%</output></div></figcaption>
+                      <div id="recordInnerViewport" class="annotation-viewport inspection-detail-viewport" tabindex="0"><div id="recordInnerSurface" class="annotation-surface"><img id="recordInnerImage" alt="企业检测校正图"><div class="detect-line vertical" data-inspection-edge="left"></div><div class="detect-line vertical" data-inspection-edge="right"></div><div class="detect-line horizontal" data-inspection-edge="top"></div><div class="detect-line horizontal" data-inspection-edge="bottom"></div></div></div>
+                    </figure>
+                  </div>
+                </section>
+                <aside class="inspection-metrics">
+                  <h3>检测数据</h3>
+                  <dl><div><dt>左右居中度</dt><dd id="inspectionHorizontal">—</dd></div><div><dt>上下居中度</dt><dd id="inspectionVertical">—</dd></div><div><dt>综合置信度</dt><dd id="inspectionConfidence">—</dd></div><div><dt>最大偏差</dt><dd id="inspectionDeviation">—</dd></div><div><dt>模型版本</dt><dd id="inspectionModel">—</dd></div><div><dt>反馈状态</dt><dd id="inspectionFeedbackState">未反馈</dd></div></dl>
+                </aside>
+              </div>
+            </div>
+          </article>
+        </section>
+      </section>
+      <section id="trainingAdminView" class="hidden">
+        <div id="trainingNotice" class="admin-notice hidden" role="status" aria-live="polite"></div>
+        <section class="summary-strip training-summary">
+          <div><span>已批准训练样本</span><strong id="trainingApprovedCount">0</strong></div>
+          <div><span>上次训练后新增</span><strong id="trainingNewCount">0</strong></div>
+          <div><span>训练设备</span><strong id="trainingGpuState">检查中</strong></div>
+          <div><span>当前模型版本</span><strong id="trainingModelVersion">—</strong></div>
+        </section>
+        <section class="training-layout">
+          <article class="training-card training-settings-card">
+            <header><div><h2>自动训练与离线智能优化</h2><p>不调用任何外部 API；先筛选不同参数方案，再完整训练最佳方案。历史数据只进入训练集。</p></div><span id="trainingAutomationBadge" class="training-pill neutral">未启用</span></header>
+            <div class="training-form-grid">
+              <label class="training-switch"><input id="trainingEnabled" type="checkbox"><span><strong>启用自动训练</strong><small>满足样本门槛时自动建立候选模型</small></span></label>
+              <label class="training-switch"><input id="trainingAutoPromote" type="checkbox"><span><strong>达标后自动更新页面模型</strong><small>必须通过独立实拍测试集安全门</small></span></label>
+              <label class="training-switch"><input id="trainingOfflineOptimization" type="checkbox"><span><strong>启用离线智能优化</strong><small>本地筛选学习率、分辨率与增强方案，不联网、不使用 API</small></span></label>
+              <label class="training-switch"><input id="trainingHardReplay" type="checkbox"><span><strong>训练集难例加权</strong><small>只重放人工修正且误差较大的训练样本，留出集绝不参与</small></span></label>
+              <label>首次训练最少批准样本<input id="trainingMinimumApproved" type="number" min="20" max="500" step="1"></label>
+              <label>每轮最少新增样本<input id="trainingMinimumNew" type="number" min="5" max="200" step="1"></label>
+              <label>每个候选模型训练轮数<input id="trainingEpochs" type="number" min="1" max="100" step="1"></label>
+              <label>每类历史训练样本上限<input id="trainingHistoryLimit" type="number" min="0" max="500" step="10"></label>
+              <label>每个模型筛选方案数<input id="trainingOptimizationTrials" type="number" min="2" max="3" step="1"></label>
+              <label>每个方案快速筛选轮数<input id="trainingScreeningEpochs" type="number" min="1" max="20" step="1"></label>
+            </div>
+            <fieldset class="training-targets"><legend>本轮训练目标</legend><label><input type="checkbox" data-training-target="outer_seg">外框分割模型</label><label><input type="checkbox" data-training-target="inner_seg">内框分割模型</label><label><input type="checkbox" data-training-target="inner_refiner">内框精修模型</label></fieldset>
+            <div class="training-safety-note"><strong>安全更新规则</strong><span>候选模型会与当前模型在固定实拍测试集上逐张对比。平均误差、最差尾部误差或失败率恶化时，旧模型继续使用。</span></div>
+            <footer><button id="saveTrainingSettings" class="button quiet" type="button">保存设置</button><button id="startTraining" class="button primary" type="button">立即建立候选模型</button></footer>
+          </article>
+          <article class="training-card training-runtime-card">
+            <header><div><h2>训练进度</h2><p id="trainingReadiness">正在读取训练状态…</p></div><span id="trainingJobBadge" class="training-pill neutral">空闲</span></header>
+            <div id="trainingProgress" class="training-progress"><span style="width:0%"></span></div>
+            <div id="trainingJobCurrent" class="training-current empty"><strong>尚未启动训练任务</strong><span>审核后的样本达到门槛即可手动或自动开始。</span></div>
+            <div class="training-subhead"><strong>最近任务</strong><span>候选训练、测试、安全更新全过程留档</span></div>
+            <div id="trainingJobList" class="training-job-list"></div>
+          </article>
+          <article class="training-card training-analysis-card">
+            <header><div><h2>实拍差距与模型修正报告</h2><p>对比当前模型、候选模型与人工标注，自动定位偏差来源。</p></div><span id="trainingGateBadge" class="training-pill neutral">暂无报告</span></header>
+            <div id="trainingMetricGrid" class="training-metric-grid"><div><span>外框角点平均误差</span><strong>—</strong><small>等待评测</small></div><div><span>内框边线平均误差</span><strong>—</strong><small>等待评测</small></div><div><span>实拍测试集</span><strong>—</strong><small>固定留出，不参与训练</small></div></div>
+            <section class="offline-optimizer-summary"><div><strong>离线优化过程</strong><span id="trainingOptimizerMode">等待首次运行</span></div><div id="trainingOptimizerTargets" class="offline-optimizer-targets"><span>运行后将显示每个模型尝试过的方案、验证指标和最终选择。</span></div></section>
+            <div class="training-report-columns">
+              <section><h3>自动诊断</h3><ul id="trainingRecommendations" class="training-recommendations"><li>完成第一轮候选模型评测后，这里会显示反光、暗部、模糊、透视和边线方向性偏差。</li></ul></section>
+              <section><h3>当前部署</h3><dl id="trainingDeployment" class="training-deployment"><div><dt>状态</dt><dd>使用现有模型</dd></div><div><dt>最近更新</dt><dd>—</dd></div><div><dt>可回滚版本</dt><dd>—</dd></div></dl><button id="rollbackTrainingModel" class="button danger-quiet" type="button" disabled>回滚最近一次模型更新</button></section>
+            </div>
+          </article>
+        </section>
+      </section>
+      <section id="tenantAdminView" class="hidden">
+        <section class="summary-strip tenant-summary">
+          <div><span>企业总数</span><strong id="sumTenants">0</strong></div>
+          <div><span>有效企业</span><strong id="sumActiveTenants">0</strong></div>
+          <div><span>企业累计检测</span><strong id="sumTenantInspections">0</strong></div>
+          <div><span>待审核反馈</span><strong id="sumTenantPending">0</strong></div>
+        </section>
+        <section class="tenant-panel">
+          <div class="tenant-panel-head"><div><strong>企业登录账号</strong><p>每家企业使用独立账号密码，检测图片和反馈按企业隔离。</p></div><span>重置密码后，该企业已登录的设备会立即退出</span></div>
+          <div class="tenant-table-wrap">
+            <table class="tenant-table">
+              <thead><tr><th>企业名称</th><th>登录账号</th><th>状态</th><th>有效期</th><th>最近使用</th><th>检测数</th><th>操作</th></tr></thead>
+              <tbody id="tenantList"></tbody>
+            </table>
+            <div id="tenantEmpty" class="tenant-empty hidden">还没有企业。点击右上角“新增企业”创建独立账号。</div>
+          </div>
+        </section>
+      </section>
+      <section id="adminUsersView" class="hidden">
+        <section class="summary-strip tenant-summary">
+          <div><span>标注管理员</span><strong id="sumAdminUsers">0</strong></div>
+          <div><span>当前启用</span><strong id="sumActiveAdminUsers">0</strong></div>
+          <div><span>权限范围</span><strong>仅人工标注</strong></div>
+          <div><span>登录方式</span><strong>独立账号密码</strong></div>
+        </section>
+        <section class="tenant-panel">
+          <div class="tenant-panel-head"><div><strong>标注管理员账号</strong><p>可查看企业问题反馈、重新标注内外框并提交到训练池。</p></div><span>不能管理企业、删除/导出数据、训练或更新模型</span></div>
+          <div class="tenant-table-wrap">
+            <table class="tenant-table admin-user-table">
+              <thead><tr><th>姓名</th><th>登录账号</th><th>权限</th><th>状态</th><th>最近使用</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody id="adminUserList"></tbody>
+            </table>
+            <div id="adminUserEmpty" class="tenant-empty hidden">还没有标注管理员。点击右上角“新增标注管理员”创建账号。</div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <dialog id="tenantDialog" class="dialog-shell tenant-dialog">
+    <form id="tenantForm" class="dialog-card">
+      <header><div><h2>新增企业</h2><p>系统会创建独立数据空间、登录账号和初始密码。</p></div><button id="closeTenantDialog" class="icon-button" type="button" aria-label="关闭">×</button></header>
+      <div class="tenant-form-fields">
+        <label>企业名称<input id="tenantName" name="name" maxlength="120" required placeholder="例如：上海某某卡牌公司"></label>
+        <label>登录账号（可留空自动生成）<input id="tenantUsername" name="username" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,63}" placeholder="例如：shanghai_cards"></label>
+        <label>初始密码（可留空自动生成）<input id="tenantPassword" name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="至少 10 个字符"></label>
+        <label>账号有效期<select id="tenantValidDays" name="valid_days"><option value="30">30 天</option><option value="90">90 天</option><option value="180">180 天</option><option value="365" selected>365 天</option><option value="730">730 天</option></select></label>
+        <p>企业只能看到自己的检测记录；问题图片仍需管理员审核后才能进入训练池。</p>
+      </div>
+      <footer><button id="cancelTenant" class="button quiet" type="button">取消</button><button id="submitTenant" class="button primary" type="submit">创建企业账号</button></footer>
+    </form>
+  </dialog>
+  <dialog id="adminUserDialog" class="dialog-shell tenant-dialog">
+    <form id="adminUserForm" class="dialog-card">
+      <header><div><h2>新增标注管理员</h2><p>该账号只能重新标注反馈数据并提交，不能进行核心管理操作。</p></div><button id="closeAdminUserDialog" class="icon-button" type="button" aria-label="关闭">×</button></header>
+      <div class="tenant-form-fields">
+        <label>管理员姓名<input id="adminUserLabel" name="label" maxlength="80" required placeholder="例如：标注员小李"></label>
+        <label>登录账号（可留空自动生成）<input id="adminUsername" name="username" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,63}" placeholder="例如：annotator_li"></label>
+        <label>初始密码（可留空自动生成）<input id="adminPassword" name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="至少 10 个字符"></label>
+        <div class="permission-summary"><strong>固定权限：人工标注</strong><span>查看待审核反馈 · 调整外框四角 · 调整内框四线 · 批准进入训练池 · 舍弃不合格样本</span><small>舍弃只会移出待审核队列并保留审计记录，不会永久删除；无权管理企业、其他管理员、导出、训练、模型部署和回滚。</small></div>
+      </div>
+      <footer><button id="cancelAdminUser" class="button quiet" type="button">取消</button><button id="submitAdminUser" class="button primary" type="submit">创建管理员账号</button></footer>
+    </form>
+  </dialog>
+  <dialog id="credentialDialog" class="dialog-shell tenant-dialog">
+    <section class="dialog-card credential-card">
+      <header><div><h2 id="credentialDialogTitle">登录信息</h2><p id="credentialDialogSubtitle">初始密码只在本次显示，请立即安全发送给使用人。</p></div><button id="closeCredentialDialog" class="icon-button" type="button" aria-label="关闭">×</button></header>
+      <div class="tenant-form-fields">
+        <textarea id="credentialText" class="credential-text" readonly rows="7"></textarea>
+        <p id="credentialWarning" class="credential-warning">平台无法查看旧密码；如使用人忘记密码，请在对应管理列表中重置。</p>
+      </div>
+      <footer><button id="dismissCredentialDialog" class="button quiet" type="button">完成</button><button id="copyCredentialButton" class="button primary" type="button">复制登录信息</button></footer>
+    </section>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/assets/common.js?v=0.5.0"></script>
+  <script src="/assets/admin.js?v=0.6.2"></script>
+</body>
+</html>

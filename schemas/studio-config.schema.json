@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ptcg.local/schemas/studio-config-v1.json",
+  "title": "PTCG Annotation Studio configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "workspace_directory", "server", "limits", "rectified_size"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "workspace_directory": {"type": "string", "minLength": 1},
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {"const": "127.0.0.1"},
+        "port": {"type": "integer", "minimum": 0, "maximum": 65535}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_upload_bytes", "max_json_bytes", "max_pixels", "max_dimension", "preview_max_dimension", "max_project_assets"],
+      "properties": {
+        "max_upload_bytes": {"type": "integer", "minimum": 1048576, "maximum": 2147483648},
+        "max_json_bytes": {"type": "integer", "minimum": 16384, "maximum": 10485760},
+        "max_pixels": {"type": "integer", "minimum": 1000000, "maximum": 500000000},
+        "max_dimension": {"type": "integer", "minimum": 1000, "maximum": 100000},
+        "preview_max_dimension": {"type": "integer", "minimum": 512, "maximum": 8192},
+        "max_project_assets": {"type": "integer", "minimum": 1, "maximum": 1000000}
+      }
+    },
+    "rectified_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": {"type": "integer", "minimum": 128, "maximum": 4096},
+        "height": {"type": "integer", "minimum": 128, "maximum": 4096}
+      }
+    }
+  }
+}

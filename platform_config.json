@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "centering": {
+    "pass_deviation_percent": 5.0
+  },
+  "feedback": {
+    "manual_review_required": true,
+    "auto_train": false
+  },
+  "security": {
+    "shared_link_tokens": true,
+    "token_storage": "sha256",
+    "production_https_required": true
+  }
+}

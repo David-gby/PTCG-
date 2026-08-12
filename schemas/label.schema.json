@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ptcg.local/schemas/annotation-label-v1.json",
+  "title": "PTCG card border annotation label",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project_id", "sample_id", "source", "annotation_status", "geometry", "assessment", "classification", "custom_metadata", "annotation"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"annotation_status": {"const": "accepted"}},
+        "required": ["annotation_status"]
+      },
+      "then": {
+        "properties": {
+          "assessment": {
+            "properties": {"reason_codes": {"maxItems": 0}}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "point": {
+      "type": "array",
+      "prefixItems": [{"type": "number", "minimum": 0}, {"type": "number", "minimum": 0}],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "line": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/point"},
+      "minItems": 2,
+      "maxItems": 2
+    }
+  },
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "project_id": {"type": "string", "pattern": "^prj_[a-f0-9]{24}$"},
+    "sample_id": {"type": "string", "pattern": "^img_[a-f0-9]{64}$"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "width", "height", "coordinate_space"],
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "coordinate_space": {"const": "exif_normalized_pixels"}
+      }
+    },
+    "annotation_status": {"enum": ["unlabeled", "in_progress", "accepted", "review", "rejected"]},
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinate_space", "outer_state", "outer_corners", "inner_state", "inner_lines_rectified", "rectified_size"],
+      "properties": {
+        "coordinate_space": {"const": "exif_normalized_pixels"},
+        "outer_state": {"enum": ["unset", "applicable", "not_applicable", "unresolved"]},
+        "outer_corners": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "array", "items": {"$ref": "#/$defs/point"}, "minItems": 4, "maxItems": 4}
+          ]
+        },
+        "inner_state": {"enum": ["unset", "applicable", "not_applicable", "unresolved"]},
+        "inner_lines_rectified": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["left", "right", "top", "bottom"],
+              "properties": {
+                "left": {"$ref": "#/$defs/line"},
+                "right": {"$ref": "#/$defs/line"},
+                "top": {"$ref": "#/$defs/line"},
+                "bottom": {"$ref": "#/$defs/line"}
+              }
+            }
+          ]
+        },
+        "rectified_size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {"width": {"type": "integer"}, "height": {"type": "integer"}}
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planarity", "reason_codes", "shadow_sides", "notes"],
+      "properties": {
+        "planarity": {"enum": ["unknown", "planar", "non_planar", "unresolved"]},
+        "reason_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$"}, "maxItems": 32, "uniqueItems": true},
+        "shadow_sides": {"type": "array", "items": {"enum": ["left", "right", "top", "bottom"]}, "uniqueItems": true},
+        "notes": {"type": "string", "maxLength": 4000}
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["face", "layout_id", "orientation_degrees_cw", "card_type"],
+      "properties": {
+        "face": {"enum": ["front", "back", "unknown"]},
+        "layout_id": {"type": "string", "maxLength": 128},
+        "orientation_degrees_cw": {"enum": [0, 90, 180, 270, null]},
+        "card_type": {"type": "string", "maxLength": 128}
+      }
+    },
+    "custom_metadata": {"type": "object"},
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["labeler", "reviewer", "revision", "created_at", "updated_at"],
+      "properties": {
+        "labeler": {"type": "string", "maxLength": 128},
+        "reviewer": {"type": "string", "maxLength": 128},
+        "revision": {"type": "integer", "minimum": 0},
+        "created_at": {"type": ["string", "null"]},
+        "updated_at": {"type": ["string", "null"]},
+        "outer_source": {"enum": ["manual_unset", "manual", "prelabel_accepted", "prelabel_modified"]},
+        "inner_source": {"enum": ["manual_unset", "manual", "prelabel_accepted", "prelabel_modified"]},
+        "preannotation_disposition": {"enum": ["not_available", "available_unconfirmed", "accepted_unchanged", "accepted_modified", "rejected"]},
+        "prelabel_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+      }
+    }
+  }
+}

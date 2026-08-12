@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "workspace_directory": "workspace",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 0
+  },
+  "limits": {
+    "max_upload_bytes": 104857600,
+    "max_json_bytes": 524288,
+    "max_pixels": 60000000,
+    "max_dimension": 24000,
+    "preview_max_dimension": 2048,
+    "max_project_assets": 100000
+  },
+  "rectified_size": {
+    "width": 630,
+    "height": 880
+  }
+}

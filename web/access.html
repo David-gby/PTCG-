@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CardScope · 企业登录</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=0.5.0">
+</head>
+<body class="login-page">
+  <main class="login-layout">
+    <section class="login-intro" aria-label="平台介绍">
+      <div class="brand-lockup login-brand"><span class="brand-mark" aria-hidden="true"></span><span>CardScope</span></div>
+      <div>
+        <span class="login-eyebrow">企业检测工作台</span>
+        <h1>卡牌内外框与<br>居中度智能检测</h1>
+        <p>上传实拍图片，逐张复核检测线；有问题的样本可直接反馈到平台审核台。</p>
+      </div>
+      <ul class="login-points">
+        <li><span>01</span>企业数据独立隔离</li>
+        <li><span>02</span>内框、外框同步复核</li>
+        <li><span>03</span>问题样本闭环改进</li>
+      </ul>
+    </section>
+    <section class="login-panel">
+      <form id="loginForm" class="login-card" autocomplete="on">
+        <header>
+          <span class="login-mobile-brand">CardScope</span>
+          <h2>登录企业工作台</h2>
+          <p>请输入平台管理员提供的企业账号和密码</p>
+        </header>
+        <label class="login-field">
+          <span>企业账号</span>
+          <input id="loginUsername" name="username" type="text" autocomplete="username" maxlength="64" required autofocus placeholder="请输入企业账号">
+        </label>
+        <label class="login-field">
+          <span>登录密码</span>
+          <span class="password-input-wrap">
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="请输入登录密码">
+            <button id="togglePassword" type="button" aria-label="显示密码">显示</button>
+          </span>
+        </label>
+        <div id="loginError" class="login-error hidden" role="alert"></div>
+        <button id="loginButton" class="button primary login-submit" type="submit">登录并开始检测</button>
+        <p class="login-help">忘记密码或账号被锁定？请联系平台管理员重置。</p>
+      </form>
+      <p class="login-privacy">登录状态仅保存在当前浏览器；问题图片只有主动提交反馈后才会进入人工审核。</p>
+    </section>
+  </main>
+  <script src="/assets/common.js?v=0.5.0"></script>
+  <script src="/assets/login.js?v=0.5.0"></script>
+</body>
+</html>

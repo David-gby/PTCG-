@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CardScope · 管理员登录</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=0.5.0">
+</head>
+<body class="login-page admin-login-page">
+  <main class="login-layout">
+    <section class="login-intro" aria-label="内部标注平台介绍">
+      <div class="brand-lockup login-brand"><span class="brand-mark" aria-hidden="true"></span><span>CardScope</span></div>
+      <div>
+        <span class="login-eyebrow">内部标注工作台</span>
+        <h1>问题样本复核与<br>内外框精细标注</h1>
+        <p>标注管理员只能处理人工标注任务；企业管理、数据删除、训练、导出和模型更新由平台主管理员控制。</p>
+      </div>
+      <ul class="login-points">
+        <li><span>01</span>独立账号留痕</li>
+        <li><span>02</span>最小权限隔离</li>
+        <li><span>03</span>标注结果入池</li>
+      </ul>
+    </section>
+    <section class="login-panel">
+      <form id="adminLoginForm" class="login-card" autocomplete="on">
+        <header>
+          <span class="login-mobile-brand">CardScope 管理端</span>
+          <h2>登录内部管理台</h2>
+          <p>请输入平台主管理员分配的管理员账号和密码</p>
+        </header>
+        <label class="login-field">
+          <span>管理员账号</span>
+          <input id="adminLoginUsername" name="username" type="text" autocomplete="username" maxlength="64" required autofocus placeholder="请输入管理员账号">
+        </label>
+        <label class="login-field">
+          <span>登录密码</span>
+          <span class="password-input-wrap">
+            <input id="adminLoginPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="请输入登录密码">
+            <button id="toggleAdminPassword" type="button" aria-label="显示密码">显示</button>
+          </span>
+        </label>
+        <div id="adminLoginError" class="login-error hidden" role="alert"></div>
+        <button id="adminLoginButton" class="button primary login-submit" type="submit">登录管理台</button>
+        <p class="login-help">忘记密码或账号被停用？请联系平台主管理员重置。</p>
+      </form>
+      <p class="login-privacy">每个管理员使用独立账号；标注与提交人会记录在样本审核信息中。</p>
+    </section>
+  </main>
+  <script src="/assets/common.js?v=0.5.0"></script>
+  <script src="/assets/admin-login.js?v=0.5.0"></script>
+</body>
+</html>

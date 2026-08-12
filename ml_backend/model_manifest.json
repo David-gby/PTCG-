@@ -1,0 +1,70 @@
+{
+  "package_version": "2026-07-25-official-asset-v2",
+  "pipeline_version": "ptcg_outer_inner_pipeline_20260725_official_asset_v2",
+  "feedback_schema_version": "1.0",
+  "promotion_policy": {
+    "outer_model_replaced": true,
+    "outer_strategy": "实体轮廓粗定位后，四条边分别进行高分辨率条带精修、鲁棒直线拟合与求交；通过五项门控后增加 1 px 防截边余量。",
+    "outer_fallback": "新候选不可信时，仅在旧物理精修满足整体不缩小和内移上限时使用旧结果，否则回退原始实体轮廓。",
+    "official_asset_strategy": "带透明圆角、比例正确且四边贴满画布的官方 PNG 走严格 Alpha 专用通道；普通实拍图继续使用面积和边缘安全门控。",
+    "outer_blind_result": "13 张锁定企业盲测上，标准化角点误差均值 4.01→2.25 px；最大内切均值 3.45→0.66 px。",
+    "inner_strategy": "左、上边使用置信度专家路由；右、下边始终使用稳定精修模型。",
+    "specialist_min_confidence": 0.52,
+    "specialist_confidence_margin": 0.06,
+    "specialist_edges": [
+      "left",
+      "top"
+    ]
+  },
+  "models": [
+    {
+      "file": "models/outer_seg.pt",
+      "role": "外框实体轮廓分割粗定位模型",
+      "architecture": "Ultralytics YOLOv8s segmentation",
+      "size_bytes": 23867386,
+      "sha256": "9F38FA6C6C2ADC3D39D6A00CC08A0ECD3A83C3F2A07E3D533CDD0537E7D956EE"
+    },
+    {
+      "file": "models/outer_line_refiner_v1.pt",
+      "role": "外框四边高分辨率条带精修与抗阴影/套壳干扰模型",
+      "architecture": "PyTorch four-side strip refiner, 249201 parameters",
+      "size_bytes": 3058137,
+      "sha256": "6472E025CFBEF7CB67D3432E4602F662EC688F8DB57BE4A51BAE7109D2A84154"
+    },
+    {
+      "file": "models/outer_seg_pre_frame2.pt",
+      "role": "小目标异常时的外框分割回退模型",
+      "architecture": "Ultralytics YOLOv8s segmentation",
+      "size_bytes": 23858805,
+      "sha256": "295C639D36BB12A936EEB9A5D4ED9D6D606E3252177E02BE0A4D0DADCCCFC292"
+    },
+    {
+      "file": "models/outer_pose.pt",
+      "role": "外框四角 Pose 回退模型",
+      "architecture": "Ultralytics YOLO pose, four keypoints",
+      "size_bytes": 5650599,
+      "sha256": "4240E09D774E4158E23BD38FD96BC5C0A3FB030DC3D522477B577B8C413F286F"
+    },
+    {
+      "file": "models/inner_frame_yolo_v3_base_candidate.pt",
+      "role": "内框分割粗定位模型",
+      "architecture": "Ultralytics YOLO segmentation",
+      "size_bytes": 94837474,
+      "sha256": "153E8EA09E3145D7642C232780274AE7442A3236EEF02A88963DB467CA857AB6"
+    },
+    {
+      "file": "models/inner_frame_edge_refiner_v4_candidate.pt",
+      "role": "内框四边稳定高分辨率精修模型，负责右/下边并作为左/上边回退",
+      "architecture": "PyTorch four-channel edge-strip refiner",
+      "size_bytes": 2061873,
+      "sha256": "94D720B1DE6916BBEF165DF172AAF2355444633DD7F2288847752B01EE1A776F"
+    },
+    {
+      "file": "models/inner_frame_edge_refiner_top_left.pt",
+      "role": "内框左/上边商标与高对比干扰专项专家，仅在置信度优势满足门槛时启用",
+      "architecture": "PyTorch four-channel edge-strip refiner",
+      "size_bytes": 2062001,
+      "sha256": "BF04FCE3FC9B425DD9727C4D31C30DF9E3B8C6EE85A72042230EDF94D2E94C3E"
+    }
+  ]
+}

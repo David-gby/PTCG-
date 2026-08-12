@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CardScope · 卡牌居中度检测</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=0.8.0">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"></span><span>CardScope</span></div>
+      <nav class="nav-list" aria-label="主导航">
+        <button class="nav-item selected" data-view="inspect">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8h8v8H8z"/></svg>
+          居中度检测
+        </button>
+        <button class="nav-item" data-view="history">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5M4 4v4.5h4.5M12 8v4l3 2"/></svg>
+          检测记录
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="account-avatar" id="accountAvatar">企</div>
+        <div><strong id="accountName">企业用户</strong><span>安全访问中</span></div>
+        <button id="logoutButton" class="logout-button" type="button">退出</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="page-header">
+        <div>
+          <h1 id="viewTitle">卡牌居中度检测</h1>
+          <p id="viewSubtitle">上传卡牌照片，自动识别内外框并计算居中度</p>
+        </div>
+        <div class="service-status"><span></span>模型服务正常</div>
+      </header>
+
+      <section id="inspectView" class="view-section">
+        <div id="uploadPanel" class="upload-panel">
+          <div class="detection-mode-switch" role="group" aria-label="检测方式">
+            <button id="traditionalModeButton" class="button primary" type="button">内外框检测</button>
+            <button id="referenceModeButton" class="button quiet" type="button">参考图配准</button>
+          </div>
+          <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+          <div class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>
+          </div>
+          <h2>上传卡牌照片</h2>
+          <p>将图片拖到这里，或从电脑中选择</p>
+          <button id="chooseButton" class="button primary">选择图片</button>
+          <span>支持 JPG、PNG、WebP，可批量上传</span>
+        </div>
+
+        <div id="referenceUploadPanel" class="upload-panel reference-upload-panel hidden">
+          <h2>参考图配准</h2>
+          <p>请分别上传实拍卡牌与对应标准图，系统会完成透视校正和内容偏移配准。</p>
+          <label>实拍卡牌<input id="referenceCaptureInput" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <label>标准图<input id="referenceStandardInput" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <button id="referenceUploadButton" class="button primary" type="button">开始参考图配准</button>
+        </div>
+
+        <section id="batchQueuePanel" class="batch-queue-panel hidden" aria-live="polite">
+          <input id="resumeFileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+          <div class="batch-queue-header">
+            <div>
+              <span class="batch-kicker">后台批量检测</span>
+              <h2 id="queueTitle">正在建立检测任务</h2>
+              <p id="queueDetail">图片上传完成后，即使关闭网页，服务器也会继续检测。</p>
+            </div>
+            <span id="queueStateBadge" class="queue-state uploading">准备中</span>
+          </div>
+          <div class="queue-progress-group">
+            <div class="queue-progress-row">
+              <div><strong>上传进度</strong><span id="uploadProgressText">0 / 0</span></div>
+              <div class="queue-progress"><span id="uploadProgressBar"></span></div>
+            </div>
+            <div class="queue-progress-row">
+              <div><strong>检测进度</strong><span id="detectionProgressText">0 / 0</span></div>
+              <div class="queue-progress detection"><span id="detectionProgressBar"></span></div>
+            </div>
+          </div>
+          <div class="queue-stats">
+            <span>已完成 <b id="queueCompletedCount">0</b></span>
+            <span>检测失败 <b id="queueFailedCount">0</b></span>
+            <span>等待上传 <b id="queueWaitingCount">0</b></span>
+            <span>当前文件 <b id="queueCurrentFile">—</b></span>
+          </div>
+          <div class="queue-actions">
+            <button id="resumeUploadButton" class="button quiet hidden" type="button">重新选择原图片，继续上传</button>
+            <button id="pauseBatchButton" class="button quiet" type="button">暂停检测</button>
+            <button id="resumeBatchButton" class="button quiet hidden" type="button">继续检测</button>
+            <button id="retryBatchButton" class="button quiet hidden" type="button">重试失败图片</button>
+            <button id="viewBatchResultsButton" class="button primary hidden" type="button">查看检测结果</button>
+            <button id="cancelBatchButton" class="button danger-quiet" type="button">取消剩余任务</button>
+          </div>
+          <p id="queueHelp" class="queue-help">正在安全上传；已经送达服务器的图片不会因为刷新或关闭网页而丢失。</p>
+        </section>
+
+        <div id="processingPanel" class="processing-panel hidden" aria-live="polite">
+          <div class="processing-visual"><span></span><span></span><span></span><span></span></div>
+          <div><strong id="processingTitle">正在识别卡牌边框</strong><p id="processingDetail">首次检测会加载模型，可能需要几十秒</p></div>
+        </div>
+
+        <article id="resultPanel" class="result-workbench hidden">
+          <div class="result-toolbar">
+            <div class="result-identity">
+              <span class="result-file" id="resultFilename">—</span>
+              <span id="detectionModeLabel" class="detection-mode-label">内外框检测</span>
+              <span class="model-version" id="modelVersion">模型 —</span>
+            </div>
+            <div id="batchMeta" class="batch-meta hidden"><strong id="batchPosition">第 1 / 1 张</strong><span id="batchState">待处理</span></div>
+            <a id="exportResultJson" class="button quiet hidden" download>导出 JSON</a>
+            <button id="newInspection" class="button quiet">继续上传</button>
+          </div>
+          <div class="result-grid">
+            <section class="visual-column">
+              <div class="dual-detection-grid">
+                <figure class="detection-card outer-detection-card">
+                  <figcaption><div><strong>外框检测</strong><span>绿色四边形 · 滚轮缩放，拖动查看</span></div><div class="detection-tools"><b id="outerDetectionState">等待结果</b><div class="zoom-actions"><button id="outerInspectionZoomOut" type="button" aria-label="缩小外框检测图">−</button><button id="outerInspectionFit" type="button">适合</button><button id="outerInspectionZoomIn" type="button" aria-label="放大外框检测图">＋</button><output id="outerInspectionZoomText">100%</output></div></div></figcaption>
+                  <div id="outerInspectionViewport" class="detection-canvas" tabindex="0" aria-label="可缩放拖动的外框检测图">
+                    <div id="originalStage" class="original-stage inspection-surface">
+                      <img id="originalImage" alt="带有外框检测线的原始卡牌">
+                      <svg id="outerOverlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points=""/></svg>
+                    </div>
+                  </div>
+                </figure>
+                <figure class="detection-card inner-detection-card">
+                  <figcaption><div><strong>内框检测</strong><span>红色四线 · 滚轮缩放，拖动查看</span></div><div class="detection-tools"><b id="innerDetectionState">等待结果</b><div class="zoom-actions"><button id="innerInspectionZoomOut" type="button" aria-label="缩小内框检测图">−</button><button id="innerInspectionFit" type="button">适合</button><button id="innerInspectionZoomIn" type="button" aria-label="放大内框检测图">＋</button><output id="innerInspectionZoomText">100%</output></div></div></figcaption>
+                  <div id="innerInspectionViewport" class="detection-canvas" tabindex="0" aria-label="可缩放拖动的内框检测图">
+                    <div id="rectifiedStage" class="card-stage inspection-surface">
+                      <img id="rectifiedImage" alt="带有内框检测线的透视校正卡牌">
+                      <div class="detect-line inner-line vertical" data-edge="left"></div>
+                      <div class="detect-line inner-line vertical" data-edge="right"></div>
+                      <div class="detect-line inner-line horizontal" data-edge="top"></div>
+                      <div class="detect-line inner-line horizontal" data-edge="bottom"></div>
+                    </div>
+                  </div>
+                </figure>
+              </div>
+              <div class="line-legend">
+                <span><i class="legend-line green"></i>绿线：卡牌物理外框</span>
+                <span><i class="legend-line red"></i>红线：卡面印刷内框</span>
+              </div>
+            </section>
+
+            <section class="metrics-column">
+              <div class="verdict-row">
+                <div><span>居中度结论</span><strong id="verdictText">居中度达标</strong><p id="verdictHint" class="verdict-hint">请检查红、绿线是否贴合；检测线正确即可确认。</p></div>
+                <div id="verdictIcon" class="verdict-icon success">✓</div>
+              </div>
+              <div class="metric-block">
+                <div class="metric-head"><span>左右居中度</span><strong><b id="leftValue">—</b> / <b id="rightValue">—</b></strong></div>
+                <div class="ratio-bar horizontal"><span id="horizontalRatio"></span><i></i></div>
+                <div class="ratio-labels"><span>左</span><span>理想中线 50 / 50</span><span>右</span></div>
+              </div>
+              <div class="metric-block">
+                <div class="metric-head"><span>上下居中度</span><strong><b id="topValue">—</b> / <b id="bottomValue">—</b></strong></div>
+                <div class="ratio-bar vertical"><span id="verticalRatio"></span><i></i></div>
+                <div class="ratio-labels"><span>上</span><span>理想中线 50 / 50</span><span>下</span></div>
+              </div>
+              <dl class="result-facts">
+                <div><dt>综合置信度</dt><dd id="confidenceValue">—</dd></div>
+                <div><dt>最大偏差</dt><dd id="deviationValue">—</dd></div>
+                <div><dt>标准尺寸</dt><dd>630 × 880 px</dd></div>
+              </dl>
+              <div id="feedbackReceipt" class="feedback-receipt hidden"><strong>反馈已进入审核台</strong><span id="feedbackReceiptId">等待管理员复核</span></div>
+              <div class="action-stack">
+                <button id="confirmButton" class="button primary large" type="button">检测线正确，确认本张</button>
+                <div class="quick-feedback-box">
+                  <strong>哪一层检测线不准确？</strong>
+                  <span>请先填写具体问题，再点击对应按钮提交；输入框可留空，但详细说明有助于管理员快速复核。</span>
+                  <label class="feedback-detail-field" for="feedbackDetails">
+                    <span class="feedback-detail-heading"><b>问题详细说明</b><small>选填</small></span>
+                    <textarea id="feedbackDetails" maxlength="2000" rows="3" placeholder="例如：右侧红线偏内约 3 px；顶部绿线贴到了透明卡套边缘。"></textarea>
+                    <span class="feedback-detail-meta"><small id="feedbackDetailsHelp">请描述偏移方向、位置和大致距离。</small><output id="feedbackDetailsCount">0 / 2000</output></span>
+                  </label>
+                  <div class="quick-feedback-actions">
+                    <button id="feedbackInner" class="button danger-quiet" type="button">提交内框问题</button>
+                    <button id="feedbackOuter" class="button danger-quiet" type="button">提交外框问题</button>
+                    <button id="feedbackBoth" class="button danger-quiet" type="button">提交内外框问题</button>
+                  </div>
+                  <p id="feedbackActionStatus" class="feedback-action-status"></p>
+                </div>
+              </div>
+              <div class="action-guidance"><strong>怎么选？</strong><span>绿线不贴合卡牌物理边缘：外框问题。</span><span>红线不贴合印刷内框：内框问题。两种线都不准就提交内外框问题。</span></div>
+              <div id="batchNavigator" class="batch-navigator hidden" aria-label="批量检测结果浏览">
+                <button id="previousResult" class="button quiet" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>上一张</button>
+                <span id="batchProgressText">第 1 张，共 1 张</span>
+                <button id="nextResult" class="button primary" type="button">下一张<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+              </div>
+              <p class="privacy-copy">图片仅用于本次检测；提交反馈后才会进入人工复核，审核通过后才可加入训练集。</p>
+            </section>
+          </div>
+        </article>
+      </section>
+
+      <section id="historyView" class="view-section hidden">
+        <div class="history-toolbar">
+          <span id="historyCount">0 条记录</span>
+          <div class="history-actions">
+            <label for="historyFilter">查看</label>
+            <select id="historyFilter">
+              <option value="">全部记录</option>
+              <option value="open">未处理（未标注）</option>
+              <option value="completed">待确认</option>
+              <option value="detection_failed">检测失败</option>
+              <option value="confirmed">已确认</option>
+              <option value="feedback">已提交反馈</option>
+            </select>
+            <button id="refreshHistory" class="button quiet" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="historyList" class="history-list"></div>
+        <div id="historyPager" class="history-pager hidden">
+          <span id="historyPageHint">已显示 0 条</span>
+          <button id="loadMoreHistory" class="button quiet" type="button">继续加载下一批</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/assets/common.js?v=0.5.0"></script>
+  <script src="/assets/enterprise.js?v=0.8.0"></script>
+</body>
+</html>
