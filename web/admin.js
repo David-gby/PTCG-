@@ -5,7 +5,7 @@
   const state = {
     items: [], selected: null, correctedInner: null, correctedOuter: null,
     getInnerCorrection: null, getOuterCorrection: null, rectifiedObjectUrl: null,
-    tenants: [], admins: [], inspections: [], selectedInspection: null, training: null, trainingLoading: false,
+    tenants: [], admins: [], inspections: [], selectedInspection: null,
     session: null,
     view: "feedback", feedbackLoading: false, feedbackReloadQueued: false, inspectionLoading: false, reviewInFlight: false,
     outerZoom: null, innerZoom: null, annotationMode: false, rectifiedOuterKey: "",
@@ -38,7 +38,6 @@
       window.setInterval(() => {
         if (state.view === "feedback" && !document.hidden) loadFeedback({ silent: true });
         if (state.view === "inspections" && !document.hidden) loadInspections({ silent: true });
-        if (state.view === "training" && !document.hidden) loadTraining({ silent: true });
       }, 8000);
     } catch (error) {
       if (!C.token()) {
@@ -68,10 +67,6 @@
     $("resetAnnotations").addEventListener("click", resetAnnotations);
     $("refreshFeedback").addEventListener("click", () => loadFeedback());
     $("refreshInspections").addEventListener("click", () => loadInspections());
-    $("refreshTraining").addEventListener("click", () => loadTraining());
-    $("saveTrainingSettings").addEventListener("click", saveTrainingSettings);
-    $("startTraining").addEventListener("click", startTraining);
-    $("rollbackTrainingModel").addEventListener("click", rollbackTrainingModel);
     $("inspectionTenantFilter").addEventListener("change", renderInspectionList);
     $("inspectionStateFilter").addEventListener("change", renderInspectionList);
     $("inspectionSearch").addEventListener("input", renderInspectionList);
@@ -217,30 +212,25 @@
   }
 
   async function switchView(view) {
-    const allowed = isOwner() ? ["feedback", "inspections", "training", "tenants", "admins"] : ["feedback"];
+    const allowed = isOwner() ? ["feedback", "inspections", "tenants", "admins"] : ["feedback"];
     state.view = allowed.includes(view) ? view : "feedback";
     const feedback = state.view === "feedback";
     const inspections = state.view === "inspections";
-    const training = state.view === "training";
     const tenants = state.view === "tenants";
     const admins = state.view === "admins";
     $("feedbackAdminView").classList.toggle("hidden", !feedback);
     $("inspectionAdminView").classList.toggle("hidden", !inspections);
-    $("trainingAdminView").classList.toggle("hidden", !training);
     $("tenantAdminView").classList.toggle("hidden", !tenants);
     $("adminUsersView").classList.toggle("hidden", !admins);
     $("exportBundle").classList.toggle("hidden", !feedback || !isOwner());
     $("exportTraining").classList.toggle("hidden", !feedback || !isOwner());
-    $("historyExportOption").classList.toggle("hidden", !feedback || !isOwner());
     $("refreshFeedback").classList.toggle("hidden", !feedback);
     $("refreshInspections").classList.toggle("hidden", !inspections);
-    $("refreshTraining").classList.toggle("hidden", !training);
     $("createTenantButton").classList.toggle("hidden", !tenants || !isOwner());
     $("createAdminButton").classList.toggle("hidden", !admins || !isOwner());
     const titles = {
       feedback: ["模型反馈审核台", "同时修正外框四角和内框四线，审核后可批量导出训练数据"],
       inspections: ["企业检测记录", "企业每完成一张检测都会自动保存在这里，可以查看内外框、居中度和反馈状态"],
-      training: ["模型自动训练与安全更新", "用审核后的实拍标注建立候选模型，自动分析误差并在通过质量门禁后更新检测页面"],
       tenants: ["企业访问管理", "为每家企业创建独立检测空间，管理链接有效期和使用状态"],
       admins: ["管理员账号管理", "创建独立标注账号，并控制启用状态和登录密码"],
     };
@@ -251,234 +241,8 @@
     }
     if (feedback) await loadFeedback({ force: true });
     else if (inspections) await loadInspections();
-    else if (training) await loadTraining();
     else if (tenants) await loadTenants();
     else await loadAdminUsers();
-  }
-
-  const TRAINING_STATUS_NAMES = {
-    queued: "排队中", preparing: "整理数据", training: "训练候选模型", evaluating: "实拍对比评测",
-    promoting: "安全更新模型", completed: "已完成", failed: "失败", blocked: "已阻止",
-  };
-  const TRAINING_PROGRESS = { queued: 4, preparing: 16, training: 58, evaluating: 82, promoting: 94, completed: 100, failed: 100, blocked: 100 };
-
-  function setTrainingNotice(message = "", type = "") {
-    const node = $("trainingNotice");
-    node.textContent = message;
-    node.className = `admin-notice${message ? "" : " hidden"}${type ? ` ${type}` : ""}`;
-  }
-
-  async function loadTraining({ silent = false } = {}) {
-    if (state.trainingLoading) return;
-    state.trainingLoading = true;
-    $("refreshTraining").disabled = true;
-    try {
-      const payload = await C.api("/admin/training");
-      state.training = payload;
-      renderTraining(payload);
-      if (!silent) C.toast("自动训练状态已刷新。");
-    } catch (error) {
-      setTrainingNotice(`读取训练状态失败：${error.message}`, "error");
-      if (!silent) C.toast(error.message, "error");
-    } finally {
-      state.trainingLoading = false;
-      $("refreshTraining").disabled = false;
-    }
-  }
-
-  function renderTraining(payload) {
-    const settings = payload.settings || {};
-    const readiness = payload.readiness || {};
-    const gpu = readiness.gpu || {};
-    const activeModel = payload.active_model || {};
-    $("trainingApprovedCount").textContent = readiness.approved_samples ?? 0;
-    $("trainingNewCount").textContent = `${readiness.new_samples_since_last_job ?? 0} / ${readiness.minimum_new_samples ?? 0}`;
-    $("trainingGpuState").textContent = gpu.available ? (gpu.name || "CUDA 可用") : "CUDA 不可用";
-    $("trainingGpuState").title = gpu.available && gpu.memory_gb ? `${gpu.memory_gb} GB 显存` : (gpu.error || "需要 NVIDIA CUDA 显卡");
-    $("trainingModelVersion").textContent = activeModel.package_version || "unknown";
-    const editingSettings = Boolean(document.activeElement?.closest?.(".training-settings-card"));
-    if (!editingSettings) {
-      $("trainingEnabled").checked = Boolean(settings.enabled);
-      $("trainingAutoPromote").checked = Boolean(settings.auto_promote);
-      $("trainingOfflineOptimization").checked = Boolean(settings.offline_optimization);
-      $("trainingHardReplay").checked = Boolean(settings.hard_example_replay);
-      $("trainingMinimumApproved").value = settings.minimum_approved_samples ?? 20;
-      $("trainingMinimumNew").value = settings.minimum_new_samples ?? 10;
-      $("trainingEpochs").value = settings.epochs ?? 25;
-      $("trainingHistoryLimit").value = settings.history_limit ?? 100;
-      $("trainingOptimizationTrials").value = settings.optimization_trials ?? 2;
-      $("trainingScreeningEpochs").value = settings.screening_epochs ?? 6;
-      for (const input of document.querySelectorAll("[data-training-target]")) input.checked = (settings.targets || []).includes(input.dataset.trainingTarget);
-    }
-    const automationBadge = $("trainingAutomationBadge");
-    automationBadge.textContent = settings.enabled ? "自动训练已启用" : "自动训练未启用";
-    automationBadge.className = `training-pill ${settings.enabled ? "pass" : "neutral"}`;
-    const active = payload.active_job;
-    const readyMessage = !gpu.available
-      ? "当前没有可用 CUDA 显卡，只能检测和审核，不能启动深度学习训练。"
-      : (readiness.approved_samples || 0) < (readiness.minimum_approved_samples || 20)
-        ? `还需批准 ${(readiness.minimum_approved_samples || 20) - (readiness.approved_samples || 0)} 张实拍标注，才达到最低训练门槛。`
-        : active ? `任务 ${active.id} 正在${TRAINING_STATUS_NAMES[active.status] || active.status}。`
-          : "样本和训练设备均已就绪，可以建立候选模型。";
-    $("trainingReadiness").textContent = readyMessage;
-    $("startTraining").disabled = !readiness.ready || Boolean(active);
-    renderTrainingJob(active, payload.jobs || []);
-    renderTrainingAnalysis(payload);
-  }
-
-  function renderTrainingJob(active, jobs) {
-    const current = active || jobs[0] || null;
-    const badge = $("trainingJobBadge");
-    const progress = current ? (TRAINING_PROGRESS[current.status] ?? 0) : 0;
-    $("trainingProgress").querySelector("span").style.width = `${progress}%`;
-    badge.textContent = current ? (TRAINING_STATUS_NAMES[current.status] || current.status) : "空闲";
-    badge.className = `training-pill ${current?.status === "completed" ? "pass" : ["failed", "blocked"].includes(current?.status) ? "fail" : active ? "running" : "neutral"}`;
-    const currentNode = $("trainingJobCurrent");
-    if (!current) {
-      currentNode.className = "training-current empty";
-      currentNode.innerHTML = "<strong>尚未启动训练任务</strong><span>审核后的样本达到门槛即可手动或自动开始。</span>";
-    } else {
-      const targets = (current.targets || []).map(trainingTargetName).join("、") || "—";
-      const activeTarget = Object.entries(current.target_statuses || {}).find(([, value]) => ["screening", "training", "training_best"].includes(value?.status));
-      const optimizerProgress = activeTarget
-        ? `；当前 ${trainingTargetName(activeTarget[0])}：${activeTarget[1].status === "screening" ? `筛选 ${activeTarget[1].trial || 1}/${activeTarget[1].trial_count || 1}` : "完整训练最佳方案"}${activeTarget[1].profile ? `（${activeTarget[1].profile}）` : ""}`
-        : "";
-      currentNode.className = `training-current ${current.status || ""}`;
-      currentNode.innerHTML = `<strong>${escapeHtml(TRAINING_STATUS_NAMES[current.status] || current.status)} · ${escapeHtml(current.id)}</strong><span>训练目标：${escapeHtml(targets)}；批准样本快照 ${Number(current.approved_snapshot_count || 0)} 张${escapeHtml(optimizerProgress)}；${escapeHtml(formatTrainingTime(current.updated_at))}</span>${current.error ? `<small>${escapeHtml(current.error)}</small>` : ""}`;
-    }
-    const list = $("trainingJobList"); list.replaceChildren();
-    if (!jobs.length) { list.innerHTML = '<div class="training-job-empty">暂无历史训练任务</div>'; return; }
-    for (const job of jobs.slice(0, 8)) {
-      const item = document.createElement("div");
-      const gate = job.quality_gate;
-      const result = job.status === "completed" ? (gate?.passed ? "通过质量门禁" : "候选未达标，保留旧模型") : (TRAINING_STATUS_NAMES[job.status] || job.status);
-      item.className = "training-job-row";
-      item.innerHTML = `<div><strong>${escapeHtml(job.id)}</strong><span>${escapeHtml(formatTrainingTime(job.created_at))}</span></div><div><span>${escapeHtml(result)}</span><small>${Number(job.approved_snapshot_count || 0)} 张</small></div>`;
-      list.append(item);
-    }
-  }
-
-  function renderTrainingAnalysis(payload) {
-    const jobs = payload.jobs || [];
-    const job = jobs.find((row) => row.analysis || row.quality_gate) || null;
-    const gate = job?.quality_gate || null;
-    const badge = $("trainingGateBadge");
-    badge.textContent = !gate ? "暂无报告" : gate.passed ? "质量门禁通过" : "候选模型未达标";
-    badge.className = `training-pill ${!gate ? "neutral" : gate.passed ? "pass" : "fail"}`;
-    const baseline = job?.analysis?.baseline || {};
-    const candidate = job?.analysis?.candidate || {};
-    const metricCards = $("trainingMetricGrid").children;
-    setMetricCard(metricCards[0], candidate.outer_corner_mean_percent_diagonal, baseline.outer_corner_mean_percent_diagonal, "% 对角线");
-    setMetricCard(metricCards[1], candidate.inner_edge_mae_px, baseline.inner_edge_mae_px, " px");
-    metricCards[2].querySelector("strong").textContent = gate ? `${gate.holdout_count || 0} 张` : "—";
-    metricCards[2].querySelector("small").textContent = gate?.holdout_count >= 5 ? "独立实拍留出集" : "至少需要 5 张固定留出图";
-    const recommendations = $("trainingRecommendations"); recommendations.replaceChildren();
-    const notes = job?.analysis?.recommendations || gate?.reasons || ["完成第一轮候选模型评测后，这里会显示反光、暗部、模糊、透视和边线方向性偏差。"];
-    for (const note of notes) { const li = document.createElement("li"); li.textContent = note; recommendations.append(li); }
-    const optimizerJob = payload.active_job?.offline_optimization_report ? payload.active_job : job;
-    renderOfflineOptimization(optimizerJob?.analysis?.offline_optimization || optimizerJob?.offline_optimization_report || null);
-    const deployment = payload.active_deployment;
-    const dl = $("trainingDeployment");
-    dl.innerHTML = `<div><dt>状态</dt><dd>${deployment ? "自动模型已上线" : "使用现有模型"}</dd></div><div><dt>最近更新</dt><dd>${escapeHtml(deployment ? formatTrainingTime(deployment.created_at) : "—")}</dd></div><div><dt>可回滚版本</dt><dd>${escapeHtml(deployment?.id || "—")}</dd></div>`;
-    $("rollbackTrainingModel").disabled = !deployment || Boolean(payload.active_job);
-  }
-
-  function renderOfflineOptimization(report) {
-    const mode = $("trainingOptimizerMode");
-    const targets = $("trainingOptimizerTargets");
-    targets.replaceChildren();
-    if (!report) {
-      mode.textContent = "等待首次运行";
-      targets.innerHTML = "<span>运行后将显示每个模型尝试过的方案、验证指标和最终选择。</span>";
-      return;
-    }
-    mode.textContent = report.enabled ? "本地参数搜索 · 未使用 API" : "固定单候选训练";
-    const entries = Object.entries(report.targets || {});
-    if (!entries.length) {
-      targets.innerHTML = "<span>正在分析数据并建立本地筛选方案…</span>";
-      return;
-    }
-    for (const [target, value] of entries) {
-      const trials = value.trials || [];
-      const selected = value.selected;
-      const node = document.createElement("div");
-      node.className = "offline-optimizer-target";
-      const metric = selected?.validation?.available
-        ? `${Number(selected.validation.value).toFixed(4)} · ${selected.validation.direction === "minimize" ? "越低越好" : "越高越好"}`
-        : "等待验证指标";
-      node.innerHTML = `<b>${escapeHtml(trainingTargetName(target))}</b><span>已筛选 ${trials.length} 个方案</span><small>${selected ? `选中：${escapeHtml(selected.label)}；${escapeHtml(metric)}` : "正在筛选…"}</small>`;
-      targets.append(node);
-    }
-  }
-
-  function setMetricCard(node, after, before, unit) {
-    node.classList.remove("metric-improved", "metric-worse");
-    const hasAfter = Number.isFinite(Number(after));
-    const hasBefore = Number.isFinite(Number(before));
-    node.querySelector("strong").textContent = hasAfter ? `${Number(after).toFixed(3)}${unit}` : "—";
-    if (!hasAfter || !hasBefore) node.querySelector("small").textContent = "等待当前/候选成对评测";
-    else {
-      const delta = Number(after) - Number(before);
-      node.querySelector("small").textContent = `当前模型 ${Number(before).toFixed(3)}${unit}；候选${delta <= 0 ? "改善" : "恶化"} ${Math.abs(delta).toFixed(3)}${unit}`;
-      node.classList.toggle("metric-improved", delta <= 0);
-      node.classList.toggle("metric-worse", delta > 0);
-    }
-  }
-
-  function trainingTargetName(value) { return { outer_seg: "外框", inner_seg: "内框", inner_refiner: "内框精修" }[value] || value; }
-  function formatTrainingTime(value) { return value ? C.formatDate(value) : "时间未知"; }
-
-  function trainingSettingsPayload() {
-    return {
-      enabled: $("trainingEnabled").checked,
-      minimum_approved_samples: Number($("trainingMinimumApproved").value),
-      minimum_new_samples: Number($("trainingMinimumNew").value),
-      epochs: Number($("trainingEpochs").value),
-      history_limit: Number($("trainingHistoryLimit").value),
-      offline_optimization: $("trainingOfflineOptimization").checked,
-      optimization_trials: Number($("trainingOptimizationTrials").value),
-      screening_epochs: Number($("trainingScreeningEpochs").value),
-      hard_example_replay: $("trainingHardReplay").checked,
-      targets: Array.from(document.querySelectorAll("[data-training-target]:checked"), (input) => input.dataset.trainingTarget),
-      auto_promote: $("trainingAutoPromote").checked,
-      require_quality_gate: true,
-    };
-  }
-
-  async function saveTrainingSettings() {
-    const button = $("saveTrainingSettings"); button.disabled = true;
-    try {
-      const payload = trainingSettingsPayload();
-      if (!payload.targets.length) throw new Error("至少选择一个训练目标。");
-      await C.api("/admin/training/settings", { method: "POST", json: payload });
-      setTrainingNotice("自动训练设置已保存。只有人工审核通过的样本会进入训练；自动更新始终经过实拍质量门禁。", "");
-      C.toast("自动训练设置已保存。");
-      await loadTraining({ silent: true });
-    } catch (error) { setTrainingNotice(`保存失败：${error.message}`, "error"); C.toast(error.message, "error"); }
-    finally { button.disabled = false; }
-  }
-
-  async function startTraining() {
-    if (!window.confirm("确定立即建立候选模型吗？训练会占用显卡。当前线上模型不会在质量门禁通过前被替换。")) return;
-    const button = $("startTraining"); button.disabled = true;
-    try {
-      const payload = await C.api("/admin/training/start", { method: "POST", json: { confirm: true } });
-      setTrainingNotice(`训练任务 ${payload.training_job.id} 已启动。可以离开本页面，后台会继续训练。`, "");
-      C.toast("候选模型训练已启动。");
-      await loadTraining({ silent: true });
-    } catch (error) { setTrainingNotice(`无法启动训练：${error.message}`, "error"); C.toast(error.message, "error"); }
-    finally { button.disabled = Boolean(state.training?.active_job); }
-  }
-
-  async function rollbackTrainingModel() {
-    if (!window.confirm("确定回滚最近一次自动模型更新吗？页面会恢复到更新前的模型权重。")) return;
-    const button = $("rollbackTrainingModel"); button.disabled = true;
-    try {
-      await C.api("/admin/training/rollback", { method: "POST", json: { confirm: true } });
-      setTrainingNotice("最近一次自动模型更新已安全回滚，后续检测将加载上一版模型。", "");
-      C.toast("模型已回滚。");
-      await loadTraining({ silent: true });
-    } catch (error) { setTrainingNotice(`回滚失败：${error.message}`, "error"); C.toast(error.message, "error"); }
   }
 
   async function loadInspections({ silent = false } = {}) {
@@ -622,11 +386,12 @@
       const payload = await C.api(`/admin/feedback${filter ? `?status=${encodeURIComponent(filter)}` : ""}`);
       state.items = payload.feedback || [];
       renderSummary(payload.summary || {});
+      renderList();
       if (state.selected) {
         const current = state.items.find((item) => item.id === state.selected.id);
         if (current) {
           state.selected = current;
-          if (silent) renderList(); else selectFeedback(current);
+          if (silent) updateFeedbackListSelection(); else selectFeedback(current);
         } else if (state.items.length) selectFeedback(state.items[0]);
         else { clearSelection(); renderList(); }
       } else if (state.items.length) selectFeedback(state.items[0]);
@@ -945,19 +710,31 @@
   }
 
   function renderList() {
-    const list = $("feedbackList"); list.replaceChildren();
+    const list = $("feedbackList");
+    const previousScrollTop = list.scrollTop;
+    list.replaceChildren();
     if (!state.items.length) { list.innerHTML = '<div class="empty-list"><strong>当前没有已提交的模型反馈</strong><span>居中度超标不会自动进入；企业须完成反馈表单并收到反馈编号。</span></div>'; return; }
     for (const item of state.items) {
       const button = document.createElement("button");
       button.className = `feedback-item${state.selected?.id === item.id ? " selected" : ""}`;
+      button.dataset.feedbackId = item.id;
       button.innerHTML = `<strong>${escapeHtml(item.filename)}</strong><p>${escapeHtml(item.tenant_name)} · ${(item.issue_tags || []).map(tagName).join("、")}</p><div class="feedback-meta"><span>${C.formatDate(item.created_at)}</span><span>${STATUS_NAMES[item.review_status] || item.review_status}</span></div>`;
       button.addEventListener("click", () => selectFeedback(item));
       list.append(button);
     }
+    list.scrollTop = previousScrollTop;
+  }
+
+  function updateFeedbackListSelection() {
+    const selectedId = state.selected?.id || "";
+    for (const button of $("feedbackList").querySelectorAll("[data-feedback-id]")) {
+      button.classList.toggle("selected", button.dataset.feedbackId === selectedId);
+    }
   }
 
   function selectFeedback(item) {
-    state.selected = item; renderList();
+    state.selected = item;
+    updateFeedbackListSelection();
     setActionStatus();
     if (state.rectifiedObjectUrl) { URL.revokeObjectURL(state.rectifiedObjectUrl); state.rectifiedObjectUrl = null; }
     $("reviewPanel").classList.remove("empty"); $("reviewEmpty").classList.add("hidden"); $("reviewContent").classList.remove("hidden");
@@ -1080,7 +857,6 @@
       let message = action === "approve"
         ? `反馈 ${feedbackId} 已审核通过，并成功写入训练池（${result.training_feedback.sample_id}）。`
         : action === "needs_annotation" ? `反馈 ${feedbackId} 已转入高级标注队列。` : action === "reopen" ? `反馈 ${feedbackId} 已撤销旧训练资格并退回待审核；此前下载的训练 ZIP 请弃用并重新导出。` : action === "discard" ? `样本 ${feedbackId} 已舍弃并移出待标注队列，未进入训练池。` : `反馈 ${feedbackId} 已驳回。`;
-      if (result.automatic_training_job?.id) message += ` 自动训练任务 ${result.automatic_training_job.id} 已在后台启动。`;
       showAdminNotice(message);
       C.toast(message);
       state.selected = action === "reopen" ? { id: feedbackId } : null;
@@ -1127,10 +903,9 @@
   async function exportTraining() {
     $("exportTraining").disabled = true;
     try {
-      const historyLimit = $("includeHistory").checked ? Number($("historyLimit").value) : 0;
-      const response = await C.api(`/admin/training-export?history_limit=${historyLimit}`, { raw: true });
+      const response = await C.api("/admin/training-export", { raw: true });
       await downloadResponse(response, "CardScope_training_data.zip");
-      C.toast(`训练数据已批量导出${historyLimit ? `，包含内框、外框历史样本各 ${historyLimit} 张` : ""}。`);
+      C.toast("训练池中的人工批准数据已导出，未混入任何历史数据。");
     } catch (error) { C.toast(error.message, "error"); }
     finally { $("exportTraining").disabled = false; }
   }

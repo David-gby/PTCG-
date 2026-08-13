@@ -26,12 +26,14 @@ import torch
 from ultralytics import YOLO
 
 if __package__:
+    from .boundary_quality_guard import assess_inner_quality, assess_outer_quality
     from .card_quality_processor.config import DEFAULT_CONFIG, normalize_config
     from .card_quality_processor.outer_line_refiner import (
         load_outer_line_refiner,
         refine_outer_quad_learned,
         select_outer_quad_policy,
     )
+    from .card_quality_processor.outer_photometric_rescue import rescue_outer_prediction
     from .card_quality_processor.outer_pose_detection import (
         KEYPOINT_NAMES,
         OuterPoseDetector,
@@ -41,14 +43,20 @@ if __package__:
     from .card_quality_processor.visualization import draw_outer_pose_result
     from .inner_frame.calibrate_inner_frame_box import calibrate_inner_frame_box
     from .inner_frame.edge_refiner import EDGE_TO_KEY, EDGES, load_refiner, predict_edge
+    from .inner_frame.global_boundary_hypothesis import (
+        analyze_inner_edge_hypotheses,
+        consensus_rescue_decision,
+    )
     from .inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 else:
+    from boundary_quality_guard import assess_inner_quality, assess_outer_quality
     from card_quality_processor.config import DEFAULT_CONFIG, normalize_config
     from card_quality_processor.outer_line_refiner import (
         load_outer_line_refiner,
         refine_outer_quad_learned,
         select_outer_quad_policy,
     )
+    from card_quality_processor.outer_photometric_rescue import rescue_outer_prediction
     from card_quality_processor.outer_pose_detection import (
         KEYPOINT_NAMES,
         OuterPoseDetector,
@@ -58,10 +66,14 @@ else:
     from card_quality_processor.visualization import draw_outer_pose_result
     from inner_frame.calibrate_inner_frame_box import calibrate_inner_frame_box
     from inner_frame.edge_refiner import EDGE_TO_KEY, EDGES, load_refiner, predict_edge
+    from inner_frame.global_boundary_hypothesis import (
+        analyze_inner_edge_hypotheses,
+        consensus_rescue_decision,
+    )
     from inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260725_official_asset_v2"
+VERSION = "ptcg_outer_inner_pipeline_20260813_feedback_trained_v1"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
@@ -401,7 +413,7 @@ class PipelineModels:
     outer_line_refiner: Path = MODELS_DIR / "outer_line_refiner_v1.pt"
     outer_line_gate: Path = PACKAGE_ROOT / "card_quality_processor" / "outer_line_gate.json"
     inner_yolo: Path = MODELS_DIR / "inner_frame_yolo_v3_base_candidate.pt"
-    inner_refiner: Path = MODELS_DIR / "inner_frame_edge_refiner_v4_candidate.pt"
+    inner_refiner: Path = MODELS_DIR / "inner_frame_edge_refiner_v5_candidate.pt"
     inner_refiner_top_left: Path | None = field(
         default_factory=lambda: (
             MODELS_DIR / "inner_frame_edge_refiner_top_left.pt"
@@ -566,6 +578,7 @@ class CardFramePipeline:
             "selected_source": accepted_source,
             "margin_canonical_px": applied_margin,
             "learned_allowed": selection["learned_allowed"],
+            "production_learned_allowed": selection["production_learned_allowed"],
             "safe_legacy_refinement": selection["safe_legacy_refinement"],
             "legacy_fallback_geometry": selection["legacy_fallback_geometry"],
             "learned_reason": learned.get("reason"),
@@ -632,6 +645,7 @@ class CardFramePipeline:
         stabilized = stabilize_inner_frame_box(rectified, _internal_box(raw))
         base = _external_box(calibrate_inner_frame_box(stabilized.box, width, height))
         base_internal = _internal_box(base)
+        global_hypotheses = analyze_inner_edge_hypotheses(rectified, base_internal)
         final = dict(base)
         details: dict[str, dict[str, float | bool | str | None]] = {}
         for edge in EDGES:
@@ -680,6 +694,26 @@ class CardFramePipeline:
                 and abs(edge_prediction.offset) <= float(settings["max_move"])
             )
             applied = float(settings["blend"]) * edge_prediction.offset if accepted else 0.0
+            rescue = consensus_rescue_decision(
+                edge,
+                base_position=base[edge],
+                stable_position=stable_prediction.refined,
+                stable_confidence=stable_prediction.confidence,
+                specialist_position=(
+                    specialist_prediction.refined
+                    if specialist_prediction is not None
+                    else None
+                ),
+                specialist_confidence=(
+                    specialist_prediction.confidence
+                    if specialist_prediction is not None
+                    else None
+                ),
+                hypothesis=global_hypotheses[edge],
+            )
+            if bool(rescue["accepted"]):
+                applied = float(rescue["position"]) - base[edge]
+                accepted = True
             final[edge] = base[edge] + applied
             details[edge] = {
                 "proposed_offset": round(edge_prediction.offset, 4),
@@ -688,6 +722,8 @@ class CardFramePipeline:
                 "entropy": round(edge_prediction.entropy, 4),
                 "peak_mass": round(edge_prediction.peak_mass, 4),
                 "accepted": accepted,
+                "global_consensus_rescue": bool(rescue["accepted"]),
+                "global_consensus_reason": str(rescue["reason"]),
                 "refiner_variant": (
                     "top_left_specialist" if use_top_left_specialist else "stable"
                 ),
@@ -700,7 +736,7 @@ class CardFramePipeline:
                 "specialist_confidence_margin": TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN,
             }
         final = _clip_box(final, width, height)
-        return {
+        result = {
             "success": True,
             "coordinate_space": "rectified_card_pixels",
             "image_size": [width, height],
@@ -716,8 +752,14 @@ class CardFramePipeline:
                 "evidence": stabilized.evidence,
             },
             "edge_refinement": details,
+            "global_edge_hypotheses": {
+                edge: hypothesis.to_dict()
+                for edge, hypothesis in global_hypotheses.items()
+            },
             "_overlay": _draw_inner_boxes(rectified, base, final),
         }
+        result["quality_assessment"] = assess_inner_quality(result)
+        return result
 
     def infer_image(self, image_bgr: np.ndarray) -> dict[str, Any]:
         if not isinstance(image_bgr, np.ndarray) or image_bgr.size == 0:
@@ -743,7 +785,17 @@ class CardFramePipeline:
         else:
             outer = self.outer_detector.predict(image_bgr, conf=0.25)
             if outer.get("success") and outer.get("points") is not None:
-                outer = self._refine_outer(image_bgr, outer)
+                outer, refinement_image, rescue_metrics = rescue_outer_prediction(
+                    self.outer_detector.predict,
+                    image_bgr,
+                    outer,
+                    conf=0.25,
+                )
+                metrics = dict(outer.get("metrics", {}))
+                metrics["photometric_rescue"] = rescue_metrics
+                outer["metrics"] = metrics
+                outer = self._refine_outer(refinement_image, outer)
+        outer["quality_assessment"] = assess_outer_quality(outer)
         outer_public = _jsonable(outer)
         if not outer.get("success") or not outer.get("points"):
             return {

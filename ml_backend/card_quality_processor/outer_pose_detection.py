@@ -3,7 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 import os
 from pathlib import Path
-import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 
 import cv2
@@ -236,26 +235,6 @@ def calculate_outer_pose_edge_support(
     }
 
 
-def _prepare_runtime_directories() -> Path:
-    runtime_root = Path(
-        os.environ.get("PTCG_RUNTIME_DIR")
-        or Path(tempfile.gettempdir()) / "ptcg_model_runtime"
-    )
-    config_root = Path(
-        os.environ.get("YOLO_CONFIG_DIR") or runtime_root / "yolo"
-    )
-    matplotlib_root = Path(
-        os.environ.get("MPLCONFIGDIR") or runtime_root / "matplotlib"
-    )
-    output_root = runtime_root / "ultralytics_runs"
-    config_root.mkdir(parents=True, exist_ok=True)
-    matplotlib_root.mkdir(parents=True, exist_ok=True)
-    output_root.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
-    os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
-    return output_root
-
-
 class OuterPoseDetector:
     """Lazy YOLO Pose wrapper for physical card corner detection."""
 
@@ -313,7 +292,13 @@ class OuterPoseDetector:
 
     def _load_model(self) -> Any:
         if self._model is None:
-            _prepare_runtime_directories()
+            project_root = Path(__file__).resolve().parents[1]
+            config_root = project_root / "reports" / "ultralytics_config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
+            matplotlib_root = project_root / "reports" / "matplotlib"
+            matplotlib_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
             from ultralytics import YOLO
 
             self._model = YOLO(str(self.model_path))
@@ -321,7 +306,13 @@ class OuterPoseDetector:
 
     def _load_silhouette_model(self, model_path: Path) -> Any:
         if self._silhouette_model is None:
-            _prepare_runtime_directories()
+            project_root = Path(__file__).resolve().parents[1]
+            config_root = project_root / "reports" / "ultralytics_config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
+            matplotlib_root = project_root / "reports" / "matplotlib"
+            matplotlib_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
             from ultralytics import YOLO
 
             self._silhouette_model = YOLO(str(model_path))
@@ -329,7 +320,13 @@ class OuterPoseDetector:
 
     def _load_silhouette_fallback_model(self, model_path: Path) -> Any:
         if self._silhouette_fallback_model is None:
-            _prepare_runtime_directories()
+            project_root = Path(__file__).resolve().parents[1]
+            config_root = project_root / "reports" / "ultralytics_config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
+            matplotlib_root = project_root / "reports" / "matplotlib"
+            matplotlib_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
             from ultralytics import YOLO
 
             self._silhouette_fallback_model = YOLO(str(model_path))
@@ -351,9 +348,6 @@ class OuterPoseDetector:
                 conf=float(refinement.get("conf_threshold", 0.15)),
                 imgsz=int(self.config.get("inference_imgsz", 640)),
                 device=self.config.get("device"),
-                project=str(_prepare_runtime_directories()),
-                name="outer_silhouette",
-                exist_ok=True,
                 augment=False,
                 verbose=False,
             )
@@ -592,9 +586,6 @@ class OuterPoseDetector:
                 conf=float(conf),
                 imgsz=int(self.config.get("inference_imgsz", 640)),
                 device=self.config.get("device"),
-                project=str(_prepare_runtime_directories()),
-                name="outer_pose",
-                exist_ok=True,
                 augment=False,
                 verbose=False,
             )

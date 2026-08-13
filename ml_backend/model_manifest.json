@@ -1,67 +1,106 @@
 {
-  "package_version": "2026-07-25-official-asset-v2",
-  "pipeline_version": "ptcg_outer_inner_pipeline_20260725_official_asset_v2",
+  "package_version": "2026-08-13-feedback-trained-v1",
+  "pipeline_version": "ptcg_outer_inner_pipeline_20260813_feedback_trained_v1",
   "feedback_schema_version": "1.0",
   "promotion_policy": {
     "outer_model_replaced": true,
-    "outer_strategy": "实体轮廓粗定位后，四条边分别进行高分辨率条带精修、鲁棒直线拟合与求交；通过五项门控后增加 1 px 防截边余量。",
-    "outer_fallback": "新候选不可信时，仅在旧物理精修满足整体不缩小和内移上限时使用旧结果，否则回退原始实体轮廓。",
-    "official_asset_strategy": "带透明圆角、比例正确且四边贴满画布的官方 PNG 走严格 Alpha 专用通道；普通实拍图继续使用面积和边缘安全门控。",
-    "outer_blind_result": "13 张锁定企业盲测上，标准化角点误差均值 4.01→2.25 px；最大内切均值 3.45→0.66 px。",
-    "inner_strategy": "左、上边使用置信度专家路由；右、下边始终使用稳定精修模型。",
-    "specialist_min_confidence": 0.52,
-    "specialist_confidence_margin": 0.06,
-    "specialist_edges": [
-      "left",
-      "top"
-    ]
+    "inner_refiner_replaced": true,
+    "weight_change": true,
+    "data_policy": "638 server-approved feedback annotations plus leakage-safe historical replay; exact image SHA groups never cross train, validation, and test; accepted model predictions are train-only low-weight stability examples.",
+    "outer_strategy": "Robust card-silhouette segmentation trained with human corrections, historical replay, gray cast-shadow, sleeve-edge, glare, exposure and blur hard negatives; followed by a high-resolution four-side strip refiner and validation-selected zero-margin geometry gate.",
+    "outer_fallback": "The physical-edge and geometry validation fallbacks remain active. Low-quality or unresolved results are routed to review rather than converted into fixed coordinates.",
+    "inner_strategy": "Seven-channel V5 four-side refiner with robust luminance/gradient inputs, source-balanced hard-example replay and edge-specific loss weighting. The gate was fitted only on the validation split and the top-left specialist remains a conservative fallback for logo/title interference.",
+    "rejected_experiments": [
+      "A second directed V5 fine-tune improved feedback metrics but regressed the historical test set, so it was not promoted.",
+      "Adaptive photometric rescue changed no coordinates in the new candidate and increased latency, so it remains disabled.",
+      "A V4 feedback-only inner refiner was more aggressive on the new feedback set but slightly regressed history, so the balanced V5 model was selected."
+    ],
+    "validation_evidence": {
+      "server_feedback_annotations": 638,
+      "server_feedback_corrected": 614,
+      "server_feedback_accepted_prediction_train_only": 24,
+      "server_feedback_test_samples": 92,
+      "outer_test_detection_rate_before": 1.0,
+      "outer_test_detection_rate_after": 1.0,
+      "outer_test_corner_mae_px_before": 13.4095,
+      "outer_test_corner_mae_px_after": 5.0686,
+      "outer_test_corner_mae_reduction_pct": 62.2,
+      "outer_test_corner_p95_px_before": 36.6823,
+      "outer_test_corner_p95_px_after": 13.6478,
+      "outer_test_corner_p95_reduction_pct": 62.8,
+      "outer_test_corner_max_px_before": 43.8590,
+      "outer_test_corner_max_px_after": 20.4104,
+      "outer_mean_seconds_before": 1.2658,
+      "outer_mean_seconds_after": 1.2637,
+      "history_robust_samples_per_condition": 30,
+      "history_clean_mean_before": 5.3731,
+      "history_clean_mean_after": 4.5937,
+      "gray_shadow_mean_before": 18.8439,
+      "gray_shadow_mean_after": 12.3727,
+      "slab_edge_p95_before": 59.0959,
+      "slab_edge_p95_after": 23.4193,
+      "known_residual_risk": "Very dark mixed blur/noise/JPEG inputs remain review-worthy; synthetic mixed-low-quality P95 regressed and is intentionally not hidden by an unconditional rescue route.",
+      "inner_feedback_test_samples": 92,
+      "inner_feedback_test_gated_mae_before": 2.375,
+      "inner_feedback_test_gated_mae_after": 1.626,
+      "inner_history_test_samples": 68,
+      "inner_history_test_gated_mae_before": 1.287,
+      "inner_history_test_gated_mae_after": 1.179,
+      "legacy_production_blind_samples": 10,
+      "legacy_production_blind_inner_mae_before": 3.8452,
+      "legacy_production_blind_inner_mae_after": 3.2728,
+      "legacy_production_blind_left_mae_before": 2.7584,
+      "legacy_production_blind_left_mae_after": 1.4367,
+      "legacy_production_blind_bottom_mae_before": 3.2753,
+      "legacy_production_blind_bottom_mae_after": 2.1286
+    }
   },
   "models": [
     {
       "file": "models/outer_seg.pt",
-      "role": "外框实体轮廓分割粗定位模型",
+      "role": "Feedback-trained robust outer card-silhouette segmentation model",
       "architecture": "Ultralytics YOLOv8s segmentation",
-      "size_bytes": 23867386,
-      "sha256": "9F38FA6C6C2ADC3D39D6A00CC08A0ECD3A83C3F2A07E3D533CDD0537E7D956EE"
+      "size_bytes": 23862772,
+      "sha256": "BF40A329AB957C293DD10868706BBD9E059A4CE61A6CFDEC3E482DF9CD585D7A"
     },
     {
       "file": "models/outer_line_refiner_v1.pt",
-      "role": "外框四边高分辨率条带精修与抗阴影/套壳干扰模型",
-      "architecture": "PyTorch four-side strip refiner, 249201 parameters",
-      "size_bytes": 3058137,
-      "sha256": "6472E025CFBEF7CB67D3432E4602F662EC688F8DB57BE4A51BAE7109D2A84154"
+      "role": "Feedback-trained high-resolution four-side outer-frame strip refiner",
+      "architecture": "PyTorch four-side strip refiner",
+      "size_bytes": 3058457,
+      "sha256": "70E713D423E58CC211CE19CBFCC483373A4F0F98CEF550F689EB2AB29B3C412D"
     },
     {
       "file": "models/outer_seg_pre_frame2.pt",
-      "role": "小目标异常时的外框分割回退模型",
+      "role": "Outer segmentation fallback for unusual small targets",
       "architecture": "Ultralytics YOLOv8s segmentation",
       "size_bytes": 23858805,
       "sha256": "295C639D36BB12A936EEB9A5D4ED9D6D606E3252177E02BE0A4D0DADCCCFC292"
     },
     {
       "file": "models/outer_pose.pt",
-      "role": "外框四角 Pose 回退模型",
+      "role": "Four-corner pose fallback model",
       "architecture": "Ultralytics YOLO pose, four keypoints",
       "size_bytes": 5650599,
       "sha256": "4240E09D774E4158E23BD38FD96BC5C0A3FB030DC3D522477B577B8C413F286F"
     },
     {
       "file": "models/inner_frame_yolo_v3_base_candidate.pt",
-      "role": "内框分割粗定位模型",
+      "role": "Inner-frame coarse segmentation model",
       "architecture": "Ultralytics YOLO segmentation",
       "size_bytes": 94837474,
       "sha256": "153E8EA09E3145D7642C232780274AE7442A3236EEF02A88963DB467CA857AB6"
     },
     {
-      "file": "models/inner_frame_edge_refiner_v4_candidate.pt",
-      "role": "内框四边稳定高分辨率精修模型，负责右/下边并作为左/上边回退",
-      "architecture": "PyTorch four-channel edge-strip refiner",
-      "size_bytes": 2061873,
-      "sha256": "94D720B1DE6916BBEF165DF172AAF2355444633DD7F2288847752B01EE1A776F"
+      "file": "models/inner_frame_edge_refiner_v5_candidate.pt",
+      "role": "Feedback-trained robust seven-channel four-side inner-frame refiner",
+      "architecture": "PyTorch seven-channel V5 edge-strip refiner",
+      "size_bytes": 3058393,
+      "sha256": "9BAC1AD8F8FD5474A24A8E8A3DA139DBAC93D846338C260581ACFDD785ABA4F9"
     },
     {
       "file": "models/inner_frame_edge_refiner_top_left.pt",
-      "role": "内框左/上边商标与高对比干扰专项专家，仅在置信度优势满足门槛时启用",
+      "role": "Top-left specialist for logo and high-contrast interference",
       "architecture": "PyTorch four-channel edge-strip refiner",
       "size_bytes": 2062001,
       "sha256": "BF04FCE3FC9B425DD9727C4D31C30DF9E3B8C6EE85A72042230EDF94D2E94C3E"

@@ -753,6 +753,7 @@ class PlatformDatabase:
                 (tenant_id,),
             )
             connection.execute("DELETE FROM batch_jobs WHERE tenant_id=?", (tenant_id,))
+            connection.execute("DELETE FROM reference_registration_jobs WHERE tenant_id=?", (tenant_id,))
             connection.execute(
                 "DELETE FROM feedback WHERE inspection_id IN (SELECT id FROM inspections WHERE tenant_id=?)",
                 (tenant_id,),
@@ -1317,6 +1318,16 @@ class PlatformDatabase:
                 raise KeyError(feedback_id)
             result = dict(row)
             connection.execute("DELETE FROM feedback WHERE id=?", (feedback_id,))
+            # Batch/reference audit rows may still point at the inspection. Keep
+            # those upload records, but detach the target before deleting it.
+            connection.execute(
+                "UPDATE batch_items SET inspection_id=NULL WHERE inspection_id=?",
+                (str(row["inspection_id"]),),
+            )
+            connection.execute(
+                "UPDATE reference_registration_jobs SET inspection_id=NULL WHERE inspection_id=?",
+                (str(row["inspection_id"]),),
+            )
             connection.execute("DELETE FROM inspections WHERE id=?", (str(row["inspection_id"]),))
         return result
 
@@ -1335,6 +1346,18 @@ class PlatformDatabase:
         query += " ORDER BY f.created_at DESC LIMIT ?"
         with self.connect() as connection:
             rows = connection.execute(query, params).fetchall()
+        return [self._feedback_row(row) for row in rows]
+
+    def list_training_feedback(self) -> list[dict[str, Any]]:
+        """Return the complete approved training pool without the UI's 1000-row cap."""
+        query = """SELECT f.*,i.tenant_id,i.project_id,i.sample_id,i.filename,i.model_version,
+                          i.prediction_json,i.state AS inspection_state,t.name AS tenant_name
+                   FROM feedback f JOIN inspections i ON i.id=f.inspection_id
+                   JOIN tenants t ON t.id=i.tenant_id
+                   WHERE f.review_status='approved' AND f.exported_feedback_id IS NOT NULL
+                   ORDER BY f.created_at"""
+        with self.connect() as connection:
+            rows = connection.execute(query).fetchall()
         return [self._feedback_row(row) for row in rows]
 
     def review_feedback(

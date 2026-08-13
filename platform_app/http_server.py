@@ -110,6 +110,33 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
+    def _send_download_file(
+        self,
+        path: Path,
+        filename: str,
+        *,
+        content_type: str = "application/zip",
+        remove_after_send: bool = True,
+    ) -> None:
+        """Stream a generated download without loading the whole archive into RAM."""
+        path = path.resolve()
+        try:
+            size = path.stat().st_size
+            self.send_response(200)
+            self._security_headers(cache="no-store")
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            safe = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+            self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
+            self.end_headers()
+            if self.command != "HEAD":
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        self.wfile.write(chunk)
+        finally:
+            if remove_after_send:
+                path.unlink(missing_ok=True)
+
     def _send_json(
         self, status: int, value: Any, *, headers: dict[str, str] | None = None
     ) -> None:
@@ -400,23 +427,13 @@ class PlatformHandler(BaseHTTPRequestHandler):
             if path == "/api/platform/v1/admin/users":
                 self._send_json(200, self.server.service.admin_users(principal))
                 return
-            if path == "/api/platform/v1/admin/training":
-                self._send_json(200, self.server.service.admin_training_status(principal))
-                return
             if path == "/api/platform/v1/admin/feedback-export":
-                data, filename = self.server.service.export_feedback_bundle(principal)
-                self._send_bytes(200, data, "application/zip", filename=filename)
+                archive_path, filename = self.server.service.export_feedback_bundle(principal)
+                self._send_download_file(archive_path, filename)
                 return
             if path == "/api/platform/v1/admin/training-export":
-                raw_limit = self._query().get("history_limit", ["0"])[0]
-                try:
-                    history_limit = max(0, min(int(raw_limit), 500))
-                except ValueError as exc:
-                    raise PlatformError(422, "INVALID_HISTORY_LIMIT", "历史样本数量格式不正确。") from exc
-                data, filename = self.server.service.export_training_bundle(
-                    principal, history_limit=history_limit
-                )
-                self._send_bytes(200, data, "application/zip", filename=filename)
+                archive_path, filename = self.server.service.export_training_bundle(principal)
+                self._send_download_file(archive_path, filename)
                 return
             raise PlatformError(404, "NOT_FOUND", "接口不存在。")
         except PlatformError as error:
@@ -533,18 +550,6 @@ class PlatformHandler(BaseHTTPRequestHandler):
             if path == "/api/platform/v1/admin/users":
                 result = self.server.service.create_admin_user(principal, self._read_json())
                 self._send_json(201, result)
-                return
-            if path == "/api/platform/v1/admin/training/settings":
-                result = self.server.service.update_training_settings(principal, self._read_json())
-                self._send_json(200, result)
-                return
-            if path == "/api/platform/v1/admin/training/start":
-                result = self.server.service.start_auto_training(principal, self._read_json())
-                self._send_json(202, result)
-                return
-            if path == "/api/platform/v1/admin/training/rollback":
-                result = self.server.service.rollback_auto_model(principal, self._read_json())
-                self._send_json(200, result)
                 return
             match = ADMIN_TENANT_ACTION_ROUTE.fullmatch(path)
             if match:
