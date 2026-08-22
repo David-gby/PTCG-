@@ -55,11 +55,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "silhouette_refinement": {
                 "enabled": True,
                 "model_path": "models/outer_seg.pt",
-                "conf_threshold": 0.15,
+                "conf_threshold": 0.20,
                 "candidate_area_weight": 0.40,
                 "candidate_aspect_weight": 0.25,
-                "fallback": {
+                "corner_calibration": {
                     "enabled": True,
+                    "outward_canonical_px": 1.75,
+                    "canonical_width": 630.0,
+                    "canonical_height": 880.0,
+                },
+                "fallback": {
+                    "enabled": False,
                     "max_primary_area_ratio": 0.40,
                     "min_area_gain_ratio": 1.35,
                     "min_pose_bbox_confidence": 0.75,
@@ -69,7 +75,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 },
             },
             "physical_edge_refinement": {
-                "enabled": True,
+                "enabled": False,
                 "max_dimension": 1800,
                 "search_ratio": 0.075,
                 "standard_resolution_search_ratio": 0.022,

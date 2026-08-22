@@ -1,0 +1,11 @@
+status,path,change
+modified,VERSION,"项目版本升级为0.8.4"
+modified,ml_backend/ptcg_inference.py,"外框失败后接入受门控的预裁切候选；内框58×83 mm确认后才完成推理；同步流水线版本"
+modified,ml_backend/model_manifest.json,"记录预裁切策略及最新部署流水线版本"
+added,ml_backend/card_quality_processor/pre_cropped_card_recovery.py,"63:88比例临时外框与58×83 mm印刷线内沿二次确认"
+added,tests/test_pre_cropped_card_recovery.py,"覆盖比例门、成功外框不改动、正确内框确认和错误几何拒绝"
+added,deployment/validation/run_precropped_smoke.py,"服务器端强制运行预裁切分支并生成三张结果图和JSON"
+added,deployment/server/apply_v0.8.4_update.sh,"带备份、健康检查和失败回滚的原位更新脚本"
+added,README_预裁切卡牌检测修复_20260822.md,"根因、算法、部署与验证说明"
+added,DEPLOYMENT_CHANGESET_20260822.txt,"部署同学快速变更摘要"
+added,CHANGED_FILES_20260822.csv,"本次逐文件修改清单"

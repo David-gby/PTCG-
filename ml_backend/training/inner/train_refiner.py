@@ -10,6 +10,7 @@ import random
 import statistics
 import sys
 import time
+import zipfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -44,14 +45,49 @@ def read_manifest(path: Path, split: str) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = [row for row in csv.DictReader(handle) if row["split"] == split]
     for row in rows:
+        if row.get("archive") and row.get("entry_name"):
+            archive_path = Path(row["archive"])
+            if not archive_path.is_absolute():
+                archive_path = (path.parent / archive_path).resolve()
+            row["archive"] = str(archive_path)
+            row["image"] = f"zip::{archive_path}::{row['entry_name']}"
+            continue
         image_path = Path(row["image"])
         if not image_path.is_absolute():
             row["image"] = str((path.parent / image_path).resolve())
     return rows
 
 
+@lru_cache(maxsize=4)
+def _open_archive(path_text: str) -> zipfile.ZipFile:
+    return zipfile.ZipFile(path_text)
+
+
 @lru_cache(maxsize=24)
-def read_image_cached(path_text: str) -> np.ndarray:
+def read_image_cached(path_text: str, expected_width: int, expected_height: int) -> np.ndarray:
+    if path_text.startswith("zip::"):
+        archive_text, entry_name = path_text[5:].split("::", 1)
+        payload = _open_archive(archive_text).read(entry_name)
+        data = np.frombuffer(payload, dtype=np.uint8)
+        image = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+        if image is None:
+            raise ValueError(f"Cannot decode ZIP image: {entry_name}")
+        if image.ndim == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        elif image.shape[2] == 4:
+            alpha = image[:, :, 3:4].astype(np.float32) / 255.0
+            image = np.clip(
+                image[:, :, :3].astype(np.float32) * alpha + 242.0 * (1.0 - alpha),
+                0,
+                255,
+            ).astype(np.uint8)
+        if image.shape[1] != expected_width or image.shape[0] != expected_height:
+            image = cv2.resize(
+                image,
+                (expected_width, expected_height),
+                interpolation=cv2.INTER_AREA,
+            )
+        return image
     path = Path(path_text)
     data = np.fromfile(str(path), dtype=np.uint8)
     image = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -97,6 +133,7 @@ class EdgeStripDataset(Dataset):
         augmentation: str,
         input_channels: int,
         consistency_views: bool,
+        sample_order: str = "row_block",
         source_repeats: dict[str, int] | None = None,
         edge_repeats: dict[str, int] | None = None,
     ) -> None:
@@ -111,6 +148,7 @@ class EdgeStripDataset(Dataset):
         self.augmentation = augmentation
         self.input_channels = input_channels
         self.consistency_views = consistency_views
+        self.sample_order = sample_order
         self.source_repeats = source_repeats or {}
         self.edge_repeats = edge_repeats or {}
         self.epoch = 0
@@ -124,15 +162,38 @@ class EdgeStripDataset(Dataset):
             for index, row in enumerate(self.rows)
             for _ in range(max(1, int(self.source_repeats.get(row["source"], 1))))
         ]
-        self.order = [
-            (row_index, edge)
-            for _ in range(self.repeats)
-            for row_index in base_order
-            for edge in EDGES
-            for _ in range(max(1, int(self.edge_repeats.get(edge, 1))))
-        ]
-        if self.training:
+        if self.training and self.sample_order == "edge_shuffle":
+            self.order = [
+                (row_index, edge)
+                for _ in range(self.repeats)
+                for row_index in base_order
+                for edge in EDGES
+                for _ in range(max(1, int(self.edge_repeats.get(edge, 1))))
+            ]
             random.Random(self.seed + epoch).shuffle(self.order)
+            return
+
+        # Keep all edge samples from one image adjacent so the decoded image is
+        # reused by read_image_cached.  This is especially important for the
+        # official corpus stored in ZIP archives: globally shuffling individual
+        # edges otherwise decompresses the same image roughly four times per
+        # epoch.  Row blocks and the edge order inside each block are still
+        # deterministically shuffled, preserving stochastic training.
+        rng = random.Random(self.seed + epoch)
+        self.order = []
+        for _ in range(self.repeats):
+            row_order = list(base_order)
+            if self.training:
+                rng.shuffle(row_order)
+            for row_index in row_order:
+                edge_order = list(EDGES)
+                if self.training:
+                    rng.shuffle(edge_order)
+                for edge in edge_order:
+                    self.order.extend(
+                        (row_index, edge)
+                        for _ in range(max(1, int(self.edge_repeats.get(edge, 1))))
+                    )
 
     def __len__(self) -> int:
         return len(self.order)
@@ -148,7 +209,7 @@ class EdgeStripDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, ...]:
         row_index, edge = self.order[index]
         row = self.rows[row_index]
-        image = read_image_cached(row["image"])
+        image = read_image_cached(row["image"], int(float(row["width"])), int(float(row["height"])))
         box = row_box(row)
         target = box[EDGE_TO_KEY[edge]]
         rng = self._rng(row, edge, index)
@@ -333,6 +394,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--balance-sources", action="store_true")
     parser.add_argument("--feedback-repeat", type=int, default=1)
+    parser.add_argument("--left-repeat", type=int, default=1)
+    parser.add_argument("--right-repeat", type=int, default=1)
+    parser.add_argument("--top-repeat", type=int, default=1)
     parser.add_argument("--bottom-repeat", type=int, default=1)
     parser.add_argument("--architecture", choices=("v4", "v5"), default="v4")
     parser.add_argument("--augmentation", choices=("auto", "legacy", "robust"), default="auto")
@@ -340,6 +404,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--consistency-views", action="store_true")
     parser.add_argument("--no-consistency-views", action="store_true")
     parser.add_argument("--selection", choices=("mean", "tail"), default="mean")
+    parser.add_argument(
+        "--sample-order",
+        choices=("row_block", "edge_shuffle"),
+        default="row_block",
+        help="row_block reuses each decoded image across its four edge samples",
+    )
     args = parser.parse_args(argv)
 
     random.seed(args.seed)
@@ -380,6 +450,9 @@ def main(argv: list[str] | None = None) -> int:
         "seed": args.seed,
         "balance_sources": args.balance_sources,
         "feedback_repeat": max(1, args.feedback_repeat),
+        "left_repeat": max(1, args.left_repeat),
+        "right_repeat": max(1, args.right_repeat),
+        "top_repeat": max(1, args.top_repeat),
         "bottom_repeat": max(1, args.bottom_repeat),
         "weight_decay": args.weight_decay,
         "patience": max(1, args.patience),
@@ -387,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
         "consistency_weight": args.consistency_weight if consistency_views else 0.0,
         "tta_height_flip": args.architecture == "v5",
         "selection": args.selection,
+        "sample_order": args.sample_order,
     }
     source_repeats: dict[str, int] = {}
     if args.balance_sources:
@@ -402,7 +476,12 @@ def main(argv: list[str] | None = None) -> int:
         source_repeats["human_feedback_hard"] = max(1, args.feedback_repeat + 1)
     if source_repeats:
         config["source_repeats"] = source_repeats
-    edge_repeats = {"bottom": max(1, args.bottom_repeat)}
+    edge_repeats = {
+        "left": max(1, args.left_repeat),
+        "right": max(1, args.right_repeat),
+        "top": max(1, args.top_repeat),
+        "bottom": max(1, args.bottom_repeat),
+    }
     config["edge_repeats"] = edge_repeats
     train_dataset = EdgeStripDataset(
         train_rows,
@@ -416,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         augmentation=augmentation,
         input_channels=input_channels,
         consistency_views=consistency_views,
+        sample_order=args.sample_order,
         source_repeats=source_repeats or None,
         edge_repeats=edge_repeats,
     )
@@ -431,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         augmentation=augmentation,
         input_channels=input_channels,
         consistency_views=False,
+        sample_order="row_block",
         edge_repeats=None,
     )
     train_loader = DataLoader(train_dataset, batch_size=args.batch, shuffle=False, num_workers=0, pin_memory=amp)

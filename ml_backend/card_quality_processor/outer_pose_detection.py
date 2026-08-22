@@ -3,7 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 import os
 from pathlib import Path
-import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 
 import cv2
@@ -207,6 +206,50 @@ def apply_outer_pose_calibration(
     return ordered + offsets * np.asarray([card_width, card_height], dtype=np.float32)
 
 
+def apply_outer_silhouette_calibration(
+    points: Iterable[Iterable[float]],
+    config: Mapping[str, Any] | None = None,
+) -> np.ndarray:
+    """Apply a small, model-specific outward correction to a silhouette quad.
+
+    Segmentation masks are predicted on a downsampled grid, which can move all
+    four physical edges inward by a nearly constant amount after projection to
+    the standard 630 x 880 card plane.  Expressing the correction in canonical
+    pixels keeps it resolution independent and avoids a hard-coded image-pixel
+    expansion.
+    """
+    cfg = _deep_pose_config(config)
+    refinement = cfg.get("silhouette_refinement", {})
+    if not isinstance(refinement, Mapping):
+        return order_points(points)
+    calibration = refinement.get("corner_calibration", {})
+    if not isinstance(calibration, Mapping) or not bool(calibration.get("enabled", False)):
+        return order_points(points)
+    try:
+        outward = float(calibration.get("outward_canonical_px", 0.0))
+        canonical_width = max(float(calibration.get("canonical_width", 630.0)), 1.0)
+        canonical_height = max(float(calibration.get("canonical_height", 880.0)), 1.0)
+    except (TypeError, ValueError):
+        return order_points(points)
+    if not np.isfinite(outward) or outward <= 0.0:
+        return order_points(points)
+
+    ordered = order_points(points)
+    tl, tr, br, bl = ordered
+    card_width = (float(np.linalg.norm(tr - tl)) + float(np.linalg.norm(br - bl))) * 0.5
+    card_height = (float(np.linalg.norm(bl - tl)) + float(np.linalg.norm(br - tr))) * 0.5
+    normalized = np.asarray(
+        [
+            [-outward / canonical_width, -outward / canonical_height],
+            [outward / canonical_width, -outward / canonical_height],
+            [outward / canonical_width, outward / canonical_height],
+            [-outward / canonical_width, outward / canonical_height],
+        ],
+        dtype=np.float32,
+    )
+    return ordered + normalized * np.asarray([card_width, card_height], dtype=np.float32)
+
+
 def calculate_outer_pose_edge_support(
     image: np.ndarray,
     points: Iterable[Iterable[float]],
@@ -234,26 +277,6 @@ def calculate_outer_pose_edge_support(
         "side_edge_support": [float(value) for value in side_scores],
         "min_side_edge_support": float(min(side_scores)),
     }
-
-
-def _prepare_runtime_directories() -> Path:
-    runtime_root = Path(
-        os.environ.get("PTCG_RUNTIME_DIR")
-        or Path(tempfile.gettempdir()) / "ptcg_model_runtime"
-    )
-    config_root = Path(
-        os.environ.get("YOLO_CONFIG_DIR") or runtime_root / "yolo"
-    )
-    matplotlib_root = Path(
-        os.environ.get("MPLCONFIGDIR") or runtime_root / "matplotlib"
-    )
-    output_root = runtime_root / "ultralytics_runs"
-    config_root.mkdir(parents=True, exist_ok=True)
-    matplotlib_root.mkdir(parents=True, exist_ok=True)
-    output_root.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
-    os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
-    return output_root
 
 
 class OuterPoseDetector:
@@ -313,7 +336,13 @@ class OuterPoseDetector:
 
     def _load_model(self) -> Any:
         if self._model is None:
-            _prepare_runtime_directories()
+            project_root = Path(__file__).resolve().parents[1]
+            config_root = project_root / "reports" / "ultralytics_config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
+            matplotlib_root = project_root / "reports" / "matplotlib"
+            matplotlib_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
             from ultralytics import YOLO
 
             self._model = YOLO(str(self.model_path))
@@ -321,7 +350,13 @@ class OuterPoseDetector:
 
     def _load_silhouette_model(self, model_path: Path) -> Any:
         if self._silhouette_model is None:
-            _prepare_runtime_directories()
+            project_root = Path(__file__).resolve().parents[1]
+            config_root = project_root / "reports" / "ultralytics_config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
+            matplotlib_root = project_root / "reports" / "matplotlib"
+            matplotlib_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
             from ultralytics import YOLO
 
             self._silhouette_model = YOLO(str(model_path))
@@ -329,7 +364,13 @@ class OuterPoseDetector:
 
     def _load_silhouette_fallback_model(self, model_path: Path) -> Any:
         if self._silhouette_fallback_model is None:
-            _prepare_runtime_directories()
+            project_root = Path(__file__).resolve().parents[1]
+            config_root = project_root / "reports" / "ultralytics_config"
+            config_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(config_root))
+            matplotlib_root = project_root / "reports" / "matplotlib"
+            matplotlib_root.mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_root))
             from ultralytics import YOLO
 
             self._silhouette_fallback_model = YOLO(str(model_path))
@@ -351,9 +392,6 @@ class OuterPoseDetector:
                 conf=float(refinement.get("conf_threshold", 0.15)),
                 imgsz=int(self.config.get("inference_imgsz", 640)),
                 device=self.config.get("device"),
-                project=str(_prepare_runtime_directories()),
-                name="outer_silhouette",
-                exist_ok=True,
                 augment=False,
                 verbose=False,
             )
@@ -405,6 +443,20 @@ class OuterPoseDetector:
                 metrics=metrics,
             )
         raw_points = [list(value) for value in points]
+        silhouette_calibration_applied = False
+        calibrated_points = apply_outer_silhouette_calibration(points, self.config)
+        if not np.allclose(calibrated_points, np.asarray(points), atol=1e-4):
+            calibrated_validation = validate_and_order_outer_keypoints(
+                calibrated_points,
+                [confidence] * 4,
+                image.shape,
+                self.config,
+            )
+            accepted_calibrated_points = calibrated_validation.get("ordered_points")
+            if calibrated_validation["success"] and accepted_calibrated_points is not None:
+                points = accepted_calibrated_points
+                validation_metrics = dict(calibrated_validation.get("metrics", {}))
+                silhouette_calibration_applied = True
         physical_cfg = self.config.get("physical_edge_refinement", {})
         physical_result: dict[str, Any] = {
             "accepted": False,
@@ -451,7 +503,7 @@ class OuterPoseDetector:
             "aspect_ratio": float(validation_metrics.get("aspect_ratio", 0.0)),
             "aspect_ratio_error": float(validation_metrics.get("aspect_ratio_error", 1.0)),
             "area_ratio": float(validation_metrics.get("area_ratio", 0.0)),
-            "calibration_applied": False,
+            "calibration_applied": silhouette_calibration_applied,
             "silhouette_refinement_applied": True,
             "physical_edge_refinement_applied": physical_applied,
             "physical_edge_refinement": physical_result,
@@ -592,9 +644,6 @@ class OuterPoseDetector:
                 conf=float(conf),
                 imgsz=int(self.config.get("inference_imgsz", 640)),
                 device=self.config.get("device"),
-                project=str(_prepare_runtime_directories()),
-                name="outer_pose",
-                exist_ok=True,
                 augment=False,
                 verbose=False,
             )

@@ -1,0 +1,36 @@
+{
+  "version": "top_v6_tail_risk_guard_20260814",
+  "fit_split": "feedback_and_history_validation_only",
+  "segments": 8,
+  "gate": {
+    "min_move": 1.0,
+    "max_move": 6.0,
+    "max_stable_inward": 1.5,
+    "min_confidence": 0.2,
+    "max_tta": 1.5,
+    "min_support": 3,
+    "min_evidence_margin": -0.25,
+    "min_robust_z": 0.0,
+    "blend": 0.35
+  },
+  "tail_guard": {
+    "fit_split": "merged_feedback_and_history_validation_only",
+    "inward_min_move": 7.0,
+    "inward_min_robust_z": 0.75,
+    "outward_min_move": 8.0,
+    "outward_min_confidence": 0.25,
+    "fallback": "retain geometrically independent base coordinate and require review"
+  },
+  "safety_contract": {
+    "direction": "only move top edge inward/downward relative to stable V5",
+    "fallback": "retain stable V5 coordinate when any guard fails",
+    "selection_metrics": [
+      "mean absolute error",
+      "P95",
+      "P99",
+      "maximum error",
+      "upward error greater than 2 px",
+      "upward error greater than 5 px"
+    ]
+  }
+}

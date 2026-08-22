@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CardScope · 反馈审核台</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=0.5.0">
+  <link rel="stylesheet" href="/assets/styles.css?v=0.8.3">
 </head>
 <body>
   <div class="app-shell admin-shell">
@@ -13,11 +13,10 @@
       <nav class="nav-list">
         <button class="nav-item selected" data-admin-view="feedback"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/></svg>反馈审核</button>
         <button class="nav-item" data-admin-view="inspections" data-owner-only><svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM7 9h3M7 13h6M16 9h1M16 13h1"/></svg>检测记录</button>
-        <button class="nav-item" data-admin-view="training" data-owner-only><svg viewBox="0 0 24 24"><path d="M5 19h14M7 16l3-4 3 2 4-7M16 7h2v2M6 5h12v14H6z"/></svg>自动训练</button>
         <button class="nav-item" data-admin-view="tenants" data-owner-only><svg viewBox="0 0 24 24"><path d="M4 20v-9h10v9M7 11V5h10v15M10 8h1M14 8h1M8 15h2"/></svg>企业管理</button>
         <button class="nav-item" data-admin-view="admins" data-owner-only><svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19v-2a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4v2M16 8h5M18.5 5.5v5"/></svg>管理员管理</button>
       </nav>
-      <div class="sidebar-note"><strong>训练安全门</strong><span>企业反馈不会自动训练；必须由管理员审核。</span></div>
+      <div class="sidebar-note"><strong>人工审核安全门</strong><span>企业反馈必须由管理员审核后，才会进入训练池。</span></div>
       <div class="sidebar-foot"><div class="account-avatar">管</div><div><strong id="adminName">平台管理员</strong><span id="adminRoleLabel">内部管理端</span></div><button id="adminLogout" class="logout-button hidden" type="button">退出</button></div>
     </aside>
     <main class="main-content admin-main">
@@ -26,9 +25,7 @@
         <div class="header-actions">
           <button id="refreshFeedback" class="button quiet">刷新反馈</button>
           <button id="refreshInspections" class="button quiet hidden">刷新记录</button>
-          <button id="refreshTraining" class="button quiet hidden">刷新训练状态</button>
-          <label id="historyExportOption" class="history-export-option" data-owner-only><input id="includeHistory" type="checkbox" checked><span>加入历史内外框数据</span><select id="historyLimit"><option value="50">各 50 张</option><option value="100" selected>各 100 张</option></select></label>
-          <button id="exportTraining" class="button primary" data-owner-only>批量导出训练数据</button>
+          <button id="exportTraining" class="button primary" data-owner-only>导出训练池数据</button>
           <button id="exportBundle" class="button quiet" data-owner-only>导出审核归档</button>
           <button id="createTenantButton" class="button primary hidden">新增企业</button>
           <button id="createAdminButton" class="button primary hidden">新增标注管理员</button>
@@ -142,51 +139,6 @@
           </article>
         </section>
       </section>
-      <section id="trainingAdminView" class="hidden">
-        <div id="trainingNotice" class="admin-notice hidden" role="status" aria-live="polite"></div>
-        <section class="summary-strip training-summary">
-          <div><span>已批准训练样本</span><strong id="trainingApprovedCount">0</strong></div>
-          <div><span>上次训练后新增</span><strong id="trainingNewCount">0</strong></div>
-          <div><span>训练设备</span><strong id="trainingGpuState">检查中</strong></div>
-          <div><span>当前模型版本</span><strong id="trainingModelVersion">—</strong></div>
-        </section>
-        <section class="training-layout">
-          <article class="training-card training-settings-card">
-            <header><div><h2>自动训练与离线智能优化</h2><p>不调用任何外部 API；先筛选不同参数方案，再完整训练最佳方案。历史数据只进入训练集。</p></div><span id="trainingAutomationBadge" class="training-pill neutral">未启用</span></header>
-            <div class="training-form-grid">
-              <label class="training-switch"><input id="trainingEnabled" type="checkbox"><span><strong>启用自动训练</strong><small>满足样本门槛时自动建立候选模型</small></span></label>
-              <label class="training-switch"><input id="trainingAutoPromote" type="checkbox"><span><strong>达标后自动更新页面模型</strong><small>必须通过独立实拍测试集安全门</small></span></label>
-              <label class="training-switch"><input id="trainingOfflineOptimization" type="checkbox"><span><strong>启用离线智能优化</strong><small>本地筛选学习率、分辨率与增强方案，不联网、不使用 API</small></span></label>
-              <label class="training-switch"><input id="trainingHardReplay" type="checkbox"><span><strong>训练集难例加权</strong><small>只重放人工修正且误差较大的训练样本，留出集绝不参与</small></span></label>
-              <label>首次训练最少批准样本<input id="trainingMinimumApproved" type="number" min="20" max="500" step="1"></label>
-              <label>每轮最少新增样本<input id="trainingMinimumNew" type="number" min="5" max="200" step="1"></label>
-              <label>每个候选模型训练轮数<input id="trainingEpochs" type="number" min="1" max="100" step="1"></label>
-              <label>每类历史训练样本上限<input id="trainingHistoryLimit" type="number" min="0" max="500" step="10"></label>
-              <label>每个模型筛选方案数<input id="trainingOptimizationTrials" type="number" min="2" max="3" step="1"></label>
-              <label>每个方案快速筛选轮数<input id="trainingScreeningEpochs" type="number" min="1" max="20" step="1"></label>
-            </div>
-            <fieldset class="training-targets"><legend>本轮训练目标</legend><label><input type="checkbox" data-training-target="outer_seg">外框分割模型</label><label><input type="checkbox" data-training-target="inner_seg">内框分割模型</label><label><input type="checkbox" data-training-target="inner_refiner">内框精修模型</label></fieldset>
-            <div class="training-safety-note"><strong>安全更新规则</strong><span>候选模型会与当前模型在固定实拍测试集上逐张对比。平均误差、最差尾部误差或失败率恶化时，旧模型继续使用。</span></div>
-            <footer><button id="saveTrainingSettings" class="button quiet" type="button">保存设置</button><button id="startTraining" class="button primary" type="button">立即建立候选模型</button></footer>
-          </article>
-          <article class="training-card training-runtime-card">
-            <header><div><h2>训练进度</h2><p id="trainingReadiness">正在读取训练状态…</p></div><span id="trainingJobBadge" class="training-pill neutral">空闲</span></header>
-            <div id="trainingProgress" class="training-progress"><span style="width:0%"></span></div>
-            <div id="trainingJobCurrent" class="training-current empty"><strong>尚未启动训练任务</strong><span>审核后的样本达到门槛即可手动或自动开始。</span></div>
-            <div class="training-subhead"><strong>最近任务</strong><span>候选训练、测试、安全更新全过程留档</span></div>
-            <div id="trainingJobList" class="training-job-list"></div>
-          </article>
-          <article class="training-card training-analysis-card">
-            <header><div><h2>实拍差距与模型修正报告</h2><p>对比当前模型、候选模型与人工标注，自动定位偏差来源。</p></div><span id="trainingGateBadge" class="training-pill neutral">暂无报告</span></header>
-            <div id="trainingMetricGrid" class="training-metric-grid"><div><span>外框角点平均误差</span><strong>—</strong><small>等待评测</small></div><div><span>内框边线平均误差</span><strong>—</strong><small>等待评测</small></div><div><span>实拍测试集</span><strong>—</strong><small>固定留出，不参与训练</small></div></div>
-            <section class="offline-optimizer-summary"><div><strong>离线优化过程</strong><span id="trainingOptimizerMode">等待首次运行</span></div><div id="trainingOptimizerTargets" class="offline-optimizer-targets"><span>运行后将显示每个模型尝试过的方案、验证指标和最终选择。</span></div></section>
-            <div class="training-report-columns">
-              <section><h3>自动诊断</h3><ul id="trainingRecommendations" class="training-recommendations"><li>完成第一轮候选模型评测后，这里会显示反光、暗部、模糊、透视和边线方向性偏差。</li></ul></section>
-              <section><h3>当前部署</h3><dl id="trainingDeployment" class="training-deployment"><div><dt>状态</dt><dd>使用现有模型</dd></div><div><dt>最近更新</dt><dd>—</dd></div><div><dt>可回滚版本</dt><dd>—</dd></div></dl><button id="rollbackTrainingModel" class="button danger-quiet" type="button" disabled>回滚最近一次模型更新</button></section>
-            </div>
-          </article>
-        </section>
-      </section>
       <section id="tenantAdminView" class="hidden">
         <section class="summary-strip tenant-summary">
           <div><span>企业总数</span><strong id="sumTenants">0</strong></div>
@@ -261,7 +213,7 @@
     </section>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/assets/common.js?v=0.5.0"></script>
-  <script src="/assets/admin.js?v=0.6.2"></script>
+  <script src="/assets/common.js?v=0.8.3"></script>
+  <script src="/assets/admin.js?v=0.8.3"></script>
 </body>
 </html>

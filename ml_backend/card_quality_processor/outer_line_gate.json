@@ -1,12 +1,24 @@
 {
-  "version": "outer_four_side_policy_20260724_v1",
-  "margin_canonical_px": 1.0,
+  "version": "outer_four_side_policy_20260821_official_corpus_v2",
+  "margin_canonical_px": 0.75,
+  "fallback_mode": "current_production",
+  "production_fallback_policy": {
+    "version": "outer_four_side_policy_20260724_v1",
+    "margin_canonical_px": 1.0,
+    "learned_gate": {
+      "min_side_confidence": 0.1,
+      "max_angle_change_degrees": 2.5,
+      "max_canonical_offset_px": 16.0,
+      "max_corner_movement_ratio": 0.04,
+      "max_area_change_ratio": 0.025
+    }
+  },
   "learned_gate": {
-    "min_side_confidence": 0.1,
-    "max_angle_change_degrees": 2.5,
-    "max_canonical_offset_px": 16.0,
+    "min_side_confidence": 0.08,
+    "max_angle_change_degrees": 2.0,
+    "max_canonical_offset_px": 20.0,
     "max_corner_movement_ratio": 0.04,
-    "max_area_change_ratio": 0.025
+    "max_area_change_ratio": 0.055
   },
   "legacy_fallback_gate": {
     "max_inward_relative_to_raw_px": 5.0,

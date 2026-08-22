@@ -1,0 +1,10 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cardscope-platform",
+      "url": "http://192.168.1.8:8765",
+      "port": 8765
+    }
+  ]
+}

@@ -214,12 +214,15 @@ def select_outer_quad_policy(
     learned_result: Mapping[str, Any],
     policy: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Apply the frozen learned gate, asymmetric legacy fallback, and safety margin."""
+    """Apply the learned gate and a validation-backed production fallback."""
 
     raw = order_points(raw_quad).astype(np.float32)
     legacy = order_points(legacy_quad).astype(np.float32)
     learned_gate = dict(policy.get("learned_gate", {}))
     fallback_gate = dict(policy.get("legacy_fallback_gate", {}))
+    fallback_mode = str(policy.get("fallback_mode", "asymmetric_safety"))
+    production_fallback = dict(policy.get("production_fallback_policy", {}))
+    production_learned_gate = dict(production_fallback.get("learned_gate", {}))
     metrics = dict(learned_result.get("metrics", {}))
     candidate: np.ndarray | None = None
     try:
@@ -231,19 +234,23 @@ def select_outer_quad_policy(
     except (TypeError, ValueError):
         candidate = None
 
-    learned_allowed = bool(
-        candidate is not None
-        and float(metrics.get("min_side_confidence", -1.0))
-        >= float(learned_gate.get("min_side_confidence", 0.10))
-        and float(metrics.get("max_angle_change_degrees", float("inf")))
-        <= float(learned_gate.get("max_angle_change_degrees", 2.5))
-        and float(metrics.get("max_canonical_offset_px", float("inf")))
-        <= float(learned_gate.get("max_canonical_offset_px", 16.0))
-        and float(metrics.get("max_corner_movement_ratio", float("inf")))
-        <= float(learned_gate.get("max_corner_movement_ratio", 0.04))
-        and float(metrics.get("area_change_ratio", float("inf")))
-        <= float(learned_gate.get("max_area_change_ratio", 0.025))
-    )
+    def passes_gate(gate: Mapping[str, Any]) -> bool:
+        return bool(
+            candidate is not None
+            and float(metrics.get("min_side_confidence", -1.0))
+            >= float(gate.get("min_side_confidence", 0.10))
+            and float(metrics.get("max_angle_change_degrees", float("inf")))
+            <= float(gate.get("max_angle_change_degrees", 2.5))
+            and float(metrics.get("max_canonical_offset_px", float("inf")))
+            <= float(gate.get("max_canonical_offset_px", 16.0))
+            and float(metrics.get("max_corner_movement_ratio", float("inf")))
+            <= float(gate.get("max_corner_movement_ratio", 0.04))
+            and float(metrics.get("area_change_ratio", float("inf")))
+            <= float(gate.get("max_area_change_ratio", 0.025))
+        )
+
+    learned_allowed = passes_gate(learned_gate)
+    production_learned_allowed = passes_gate(production_learned_gate)
     fallback_geometry = outer_quad_relative_geometry(legacy, raw)
     safe_legacy_refinement = bool(
         fallback_geometry["max_inward_relative_to_raw_px"]
@@ -256,14 +263,31 @@ def select_outer_quad_policy(
     if learned_allowed and candidate is not None:
         selected = candidate
         selected_source = "learned_four_side_refiner"
+        margin = float(policy.get("margin_canonical_px", 1.0))
+    elif fallback_mode == "current_production":
+        # Reproduce the complete previously deployed policy, rather than
+        # returning the pre-policy ``legacy`` intermediate.  The distinction
+        # matters when the former production gate would have selected the
+        # learned candidate or the raw silhouette.
+        if production_learned_allowed and candidate is not None:
+            selected = candidate
+            selected_source = "production_learned_fallback"
+        elif safe_legacy_refinement:
+            selected = legacy
+            selected_source = "production_safe_legacy_fallback"
+        else:
+            selected = raw
+            selected_source = "production_raw_fallback"
+        margin = float(production_fallback.get("margin_canonical_px", 1.0))
     elif safe_legacy_refinement:
         selected = legacy
         selected_source = "safe_legacy_refinement"
+        margin = float(policy.get("margin_canonical_px", 1.0))
     else:
         selected = raw
         selected_source = "raw_silhouette"
+        margin = float(policy.get("margin_canonical_px", 1.0))
 
-    margin = float(policy.get("margin_canonical_px", 1.0))
     final = expand_outer_quad(selected, margin)
     return {
         "points": final.round(4).tolist(),
@@ -271,7 +295,9 @@ def select_outer_quad_policy(
         "selected_source": selected_source,
         "margin_canonical_px": margin,
         "learned_allowed": learned_allowed,
+        "production_learned_allowed": production_learned_allowed,
         "safe_legacy_refinement": safe_legacy_refinement,
+        "fallback_mode": fallback_mode,
         "legacy_fallback_geometry": fallback_geometry,
         "learned_metrics": metrics,
     }

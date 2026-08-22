@@ -26,11 +26,20 @@ import torch
 from ultralytics import YOLO
 
 if __package__:
+    from .boundary_quality_guard import assess_inner_quality, assess_outer_quality
     from .card_quality_processor.config import DEFAULT_CONFIG, normalize_config
     from .card_quality_processor.outer_line_refiner import (
         load_outer_line_refiner,
         refine_outer_quad_learned,
         select_outer_quad_policy,
+    )
+    from .card_quality_processor.outer_boundary_contact_recovery import (
+        recover_boundary_contact_outer,
+    )
+    from .card_quality_processor.outer_photometric_rescue import rescue_outer_prediction
+    from .card_quality_processor.pre_cropped_card_recovery import (
+        confirm_pre_cropped_inner,
+        propose_pre_cropped_outer,
     )
     from .card_quality_processor.outer_pose_detection import (
         KEYPOINT_NAMES,
@@ -41,13 +50,30 @@ if __package__:
     from .card_quality_processor.visualization import draw_outer_pose_result
     from .inner_frame.calibrate_inner_frame_box import calibrate_inner_frame_box
     from .inner_frame.edge_refiner import EDGE_TO_KEY, EDGES, load_refiner, predict_edge
+    from .inner_frame.global_boundary_hypothesis import (
+        analyze_inner_edge_hypotheses,
+        consensus_rescue_decision,
+        guarded_top_specialist_decision,
+        guarded_top_tail_fallback_decision,
+        score_inner_edge_positions,
+    )
+    from .inner_frame.physical_inner_prior import guarded_refine_physical_inner_box
     from .inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 else:
+    from boundary_quality_guard import assess_inner_quality, assess_outer_quality
     from card_quality_processor.config import DEFAULT_CONFIG, normalize_config
     from card_quality_processor.outer_line_refiner import (
         load_outer_line_refiner,
         refine_outer_quad_learned,
         select_outer_quad_policy,
+    )
+    from card_quality_processor.outer_boundary_contact_recovery import (
+        recover_boundary_contact_outer,
+    )
+    from card_quality_processor.outer_photometric_rescue import rescue_outer_prediction
+    from card_quality_processor.pre_cropped_card_recovery import (
+        confirm_pre_cropped_inner,
+        propose_pre_cropped_outer,
     )
     from card_quality_processor.outer_pose_detection import (
         KEYPOINT_NAMES,
@@ -58,10 +84,18 @@ else:
     from card_quality_processor.visualization import draw_outer_pose_result
     from inner_frame.calibrate_inner_frame_box import calibrate_inner_frame_box
     from inner_frame.edge_refiner import EDGE_TO_KEY, EDGES, load_refiner, predict_edge
+    from inner_frame.global_boundary_hypothesis import (
+        analyze_inner_edge_hypotheses,
+        consensus_rescue_decision,
+        guarded_top_specialist_decision,
+        guarded_top_tail_fallback_decision,
+        score_inner_edge_positions,
+    )
+    from inner_frame.physical_inner_prior import guarded_refine_physical_inner_box
     from inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260725_official_asset_v2"
+VERSION = "ptcg_outer_inner_pipeline_20260822_precropped_v1"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
@@ -401,7 +435,7 @@ class PipelineModels:
     outer_line_refiner: Path = MODELS_DIR / "outer_line_refiner_v1.pt"
     outer_line_gate: Path = PACKAGE_ROOT / "card_quality_processor" / "outer_line_gate.json"
     inner_yolo: Path = MODELS_DIR / "inner_frame_yolo_v3_base_candidate.pt"
-    inner_refiner: Path = MODELS_DIR / "inner_frame_edge_refiner_v4_candidate.pt"
+    inner_refiner: Path = MODELS_DIR / "inner_frame_edge_refiner_v5_candidate.pt"
     inner_refiner_top_left: Path | None = field(
         default_factory=lambda: (
             MODELS_DIR / "inner_frame_edge_refiner_top_left.pt"
@@ -409,7 +443,18 @@ class PipelineModels:
             else None
         )
     )
+    inner_refiner_top: Path | None = field(
+        default_factory=lambda: (
+            MODELS_DIR / "inner_frame_edge_refiner_top_v6.pt"
+            if (MODELS_DIR / "inner_frame_edge_refiner_top_v6.pt").is_file()
+            else None
+        )
+    )
+    inner_top_gate: Path = PACKAGE_ROOT / "inner_frame" / "top_specialist_gate.json"
     inner_gate: Path = PACKAGE_ROOT / "inner_frame" / "gate.json"
+    inner_physical_prior: Path = (
+        PACKAGE_ROOT / "inner_frame" / "physical_inner_prior.json"
+    )
 
     def validate(self) -> None:
         missing = [
@@ -440,14 +485,17 @@ class CardFramePipeline:
         self.models = models or PipelineModels()
         self.models.validate()
 
-        config = deepcopy(DEFAULT_CONFIG)
+        # Resolve user overrides first, then bind the explicitly supplied model
+        # paths.  The previous shallow top-level merge could replace the whole
+        # ``outer_detection`` section and silently restore DEFAULT_CONFIG's
+        # outer_seg path, so candidate/deployed weights were never loaded when
+        # any outer_config override was also present.
+        config = normalize_config(outer_config) if outer_config else deepcopy(DEFAULT_CONFIG)
         config["outer_detection"]["deep_pose"]["device"] = self.device
         config["outer_detection"]["deep_pose"]["model_path"] = str(self.models.outer_pose)
         config["outer_detection"]["deep_pose"]["silhouette_refinement"]["model_path"] = str(
             self.models.outer_seg
         )
-        if outer_config:
-            config = normalize_config({**config, **dict(outer_config)})
         self.outer_config = config
         self.outer_detector = OuterPoseDetector(config=config)
 
@@ -461,7 +509,13 @@ class CardFramePipeline:
         self._inner_refiner_config: dict[str, Any] | None = None
         self._inner_refiner_top_left: Any | None = None
         self._inner_refiner_top_left_config: dict[str, Any] | None = None
+        self._inner_refiner_top: Any | None = None
+        self._inner_refiner_top_config: dict[str, Any] | None = None
         self._gate = json.loads(self.models.inner_gate.read_text(encoding="utf-8"))
+        self._top_gate = json.loads(self.models.inner_top_gate.read_text(encoding="utf-8"))
+        self._physical_inner_prior = json.loads(
+            self.models.inner_physical_prior.read_text(encoding="utf-8")
+        )
 
     def _load_outer_line_model(self) -> None:
         if self._outer_line_refiner is None:
@@ -566,6 +620,7 @@ class CardFramePipeline:
             "selected_source": accepted_source,
             "margin_canonical_px": applied_margin,
             "learned_allowed": selection["learned_allowed"],
+            "production_learned_allowed": selection["production_learned_allowed"],
             "safe_legacy_refinement": selection["safe_legacy_refinement"],
             "legacy_fallback_geometry": selection["legacy_fallback_geometry"],
             "learned_reason": learned.get("reason"),
@@ -589,6 +644,11 @@ class CardFramePipeline:
         if self.models.inner_refiner_top_left is not None and self._inner_refiner_top_left is None:
             self._inner_refiner_top_left, self._inner_refiner_top_left_config = load_refiner(
                 self.models.inner_refiner_top_left,
+                self.torch_device,
+            )
+        if self.models.inner_refiner_top is not None and self._inner_refiner_top is None:
+            self._inner_refiner_top, self._inner_refiner_top_config = load_refiner(
+                self.models.inner_refiner_top,
                 self.torch_device,
             )
 
@@ -632,6 +692,7 @@ class CardFramePipeline:
         stabilized = stabilize_inner_frame_box(rectified, _internal_box(raw))
         base = _external_box(calibrate_inner_frame_box(stabilized.box, width, height))
         base_internal = _internal_box(base)
+        global_hypotheses = analyze_inner_edge_hypotheses(rectified, base_internal)
         final = dict(base)
         details: dict[str, dict[str, float | bool | str | None]] = {}
         for edge in EDGES:
@@ -664,6 +725,23 @@ class CardFramePipeline:
                     patch_width=int(self._inner_refiner_top_left_config.get("patch_width", 96)),
                     patch_height=int(self._inner_refiner_top_left_config.get("patch_height", 192)),
                 )
+            top_prediction = None
+            if (
+                edge == "top"
+                and self._inner_refiner_top is not None
+                and self._inner_refiner_top_config is not None
+            ):
+                top_prediction = predict_edge(
+                    self._inner_refiner_top,
+                    rectified,
+                    edge,
+                    base_internal[key],
+                    base_internal,
+                    device=self.torch_device,
+                    band_half=int(self._inner_refiner_top_config.get("band_half", 32)),
+                    patch_width=int(self._inner_refiner_top_config.get("patch_width", 96)),
+                    patch_height=int(self._inner_refiner_top_config.get("patch_height", 224)),
+                )
             use_top_left_specialist = bool(
                 specialist_prediction is not None
                 and specialist_prediction.confidence >= TOP_LEFT_SPECIALIST_MIN_CONFIDENCE
@@ -680,6 +758,82 @@ class CardFramePipeline:
                 and abs(edge_prediction.offset) <= float(settings["max_move"])
             )
             applied = float(settings["blend"]) * edge_prediction.offset if accepted else 0.0
+            top_route: dict[str, Any] = {
+                "accepted": False,
+                "position": base[edge] + applied,
+                "reason": "top_specialist_unavailable" if edge == "top" else "not_top_edge",
+            }
+            top_evidence = None
+            if edge == "top" and top_prediction is not None:
+                stable_position = base[edge] + applied
+                evidence = score_inner_edge_positions(
+                    rectified,
+                    base_internal,
+                    "top",
+                    [stable_position, top_prediction.refined],
+                    segments=int(self._top_gate.get("segments", 8)),
+                )
+                top_evidence = {
+                    "stable": evidence[0].to_dict(),
+                    "specialist": evidence[1].to_dict(),
+                }
+                top_route = guarded_top_specialist_decision(
+                    base_position=base[edge],
+                    stable_position=stable_position,
+                    specialist_position=top_prediction.refined,
+                    specialist_confidence=top_prediction.confidence,
+                    specialist_tta_disagreement=top_prediction.tta_disagreement,
+                    stable_evidence=evidence[0],
+                    specialist_evidence=evidence[1],
+                    config=self._top_gate["gate"],
+                )
+                if bool(top_route["accepted"]):
+                    applied = float(top_route["position"]) - base[edge]
+                    accepted = True
+            rescue = consensus_rescue_decision(
+                edge,
+                base_position=base[edge],
+                stable_position=stable_prediction.refined,
+                stable_confidence=stable_prediction.confidence,
+                specialist_position=(
+                    specialist_prediction.refined
+                    if specialist_prediction is not None
+                    else None
+                ),
+                specialist_confidence=(
+                    specialist_prediction.confidence
+                    if specialist_prediction is not None
+                    else None
+                ),
+                hypothesis=global_hypotheses[edge],
+            )
+            if bool(rescue["accepted"]):
+                applied = float(rescue["position"]) - base[edge]
+                accepted = True
+            top_tail_guard: dict[str, Any] = {
+                "fallback": False,
+                "position": base[edge] + applied,
+                "reason": "not_top_edge" if edge != "top" else "tail_guard_unavailable",
+            }
+            if edge == "top" and top_evidence is not None:
+                selected_position = base[edge] + applied
+                selected_evidence = score_inner_edge_positions(
+                    rectified,
+                    base_internal,
+                    "top",
+                    [selected_position],
+                    segments=int(self._top_gate.get("segments", 8)),
+                )[0]
+                top_tail_guard = guarded_top_tail_fallback_decision(
+                    base_position=base[edge],
+                    selected_position=selected_position,
+                    selected_confidence=edge_prediction.confidence,
+                    selected_evidence=selected_evidence,
+                    config=self._top_gate["tail_guard"],
+                )
+                if bool(top_tail_guard["fallback"]):
+                    applied = 0.0
+                    accepted = False
             final[edge] = base[edge] + applied
             details[edge] = {
                 "proposed_offset": round(edge_prediction.offset, 4),
@@ -688,6 +842,8 @@ class CardFramePipeline:
                 "entropy": round(edge_prediction.entropy, 4),
                 "peak_mass": round(edge_prediction.peak_mass, 4),
                 "accepted": accepted,
+                "global_consensus_rescue": bool(rescue["accepted"]),
+                "global_consensus_reason": str(rescue["reason"]),
                 "refiner_variant": (
                     "top_left_specialist" if use_top_left_specialist else "stable"
                 ),
@@ -698,9 +854,44 @@ class CardFramePipeline:
                     else None
                 ),
                 "specialist_confidence_margin": TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN,
+                "top_v6_router_accepted": bool(top_route["accepted"]),
+                "top_v6_router_reason": str(top_route["reason"]),
+                "top_v6_router": top_route if edge == "top" else None,
+                "top_v6_evidence": top_evidence,
+                "top_v6_confidence": (
+                    round(top_prediction.confidence, 4)
+                    if top_prediction is not None
+                    else None
+                ),
+                "top_tail_guard_fallback": bool(top_tail_guard["fallback"]),
+                "top_tail_guard_reason": str(top_tail_guard["reason"]),
+                "top_tail_guard": top_tail_guard if edge == "top" else None,
             }
-        final = _clip_box(final, width, height)
-        return {
+        def physical_evidence_provider(
+            edge: str,
+            positions: list[float] | tuple[float, ...],
+            candidate_box: Mapping[str, float],
+        ) -> list[dict[str, Any]]:
+            return [
+                item.to_dict()
+                for item in score_inner_edge_positions(
+                    rectified,
+                    _internal_box(candidate_box),
+                    edge,
+                    list(positions),
+                    segments=8,
+                )
+            ]
+
+        physical_prior = guarded_refine_physical_inner_box(
+            final,
+            width,
+            height,
+            self._physical_inner_prior,
+            evidence_provider=physical_evidence_provider,
+        )
+        final = _clip_box(physical_prior["box"], width, height)
+        result = {
             "success": True,
             "coordinate_space": "rectified_card_pixels",
             "image_size": [width, height],
@@ -716,8 +907,15 @@ class CardFramePipeline:
                 "evidence": stabilized.evidence,
             },
             "edge_refinement": details,
+            "global_edge_hypotheses": {
+                edge: hypothesis.to_dict()
+                for edge, hypothesis in global_hypotheses.items()
+            },
+            "physical_inner_prior": physical_prior,
             "_overlay": _draw_inner_boxes(rectified, base, final),
         }
+        result["quality_assessment"] = assess_inner_quality(result)
+        return result
 
     def infer_image(self, image_bgr: np.ndarray) -> dict[str, Any]:
         if not isinstance(image_bgr, np.ndarray) or image_bgr.size == 0:
@@ -742,8 +940,28 @@ class CardFramePipeline:
             outer = _official_full_frame_outer(image_bgr, input_profile)
         else:
             outer = self.outer_detector.predict(image_bgr, conf=0.25)
+            if not outer.get("success") and outer.get("points") is not None:
+                outer = recover_boundary_contact_outer(
+                    image_bgr,
+                    outer,
+                    self.outer_config,
+                )
             if outer.get("success") and outer.get("points") is not None:
-                outer = self._refine_outer(image_bgr, outer)
+                outer, refinement_image, rescue_metrics = rescue_outer_prediction(
+                    self.outer_detector.predict,
+                    image_bgr,
+                    outer,
+                    conf=0.25,
+                )
+                metrics = dict(outer.get("metrics", {}))
+                metrics["photometric_rescue"] = rescue_metrics
+                outer["metrics"] = metrics
+                outer = self._refine_outer(refinement_image, outer)
+            if not outer.get("success"):
+                provisional_outer = propose_pre_cropped_outer(image_bgr, outer)
+                if provisional_outer is not None:
+                    outer = provisional_outer
+        outer["quality_assessment"] = assess_outer_quality(outer)
         outer_public = _jsonable(outer)
         if not outer.get("success") or not outer.get("points"):
             return {
@@ -797,6 +1015,53 @@ class CardFramePipeline:
                 },
                 "_rectified_image": rectified,
             }
+
+        recovery_metrics = outer.get("metrics", {}).get(
+            "pre_cropped_card_recovery"
+        )
+        if isinstance(recovery_metrics, Mapping) and bool(
+            recovery_metrics.get("provisional", False)
+        ):
+            confirmation = confirm_pre_cropped_inner(inner)
+            metrics = dict(outer.get("metrics", {}))
+            metrics["pre_cropped_card_recovery"] = {
+                **dict(recovery_metrics),
+                **confirmation,
+                "provisional": False,
+            }
+            outer["metrics"] = metrics
+            outer_public = _jsonable(outer)
+            if not bool(confirmation.get("confirmed", False)):
+                return {
+                    "success": False,
+                    "version": VERSION,
+                    "stage": "outer_frame",
+                    "error_code": "PRE_CROPPED_CARD_NOT_CONFIRMED",
+                    "message": (
+                        "The full-frame outer hypothesis was rejected because "
+                        "the detected inner frame did not match the global "
+                        "58x83 mm inner-edge geometry."
+                    ),
+                    "outer_frame": outer_public,
+                    "rectification": {
+                        key: _jsonable(value)
+                        for key, value in rectification.items()
+                        if key != "rectified_image"
+                    },
+                    "inner_frame": {
+                        key: _jsonable(value)
+                        for key, value in inner.items()
+                        if not key.startswith("_")
+                    },
+                    "_rectified_image": rectified,
+                    "_inner_overlay": inner["_overlay"],
+                }
+            outer["message"] = (
+                "Pre-cropped full-frame card confirmed by the independently "
+                "detected 58x83 mm printed inner-line inner edge."
+            )
+            outer["quality_assessment"] = assess_outer_quality(outer)
+            outer_public = _jsonable(outer)
 
         outer_overlay = draw_outer_pose_result(
             image_bgr,

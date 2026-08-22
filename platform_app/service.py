@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import base64
-import csv
 import hashlib
 import hmac
 import io
@@ -15,6 +14,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -273,6 +273,8 @@ class PlatformService:
         self._auto_training_lock = threading.Lock()
         self.display_cache_root = self.private_root / "display_cache"
         self.display_cache_root.mkdir(parents=True, exist_ok=True)
+        self.export_root = self.private_root / "generated_exports"
+        self.export_root.mkdir(parents=True, exist_ok=True)
         self._display_cache_lock = threading.Lock()
         self.batch_spool_root = self.private_root / "upload_batches"
         self.batch_spool_root.mkdir(parents=True, exist_ok=True)
@@ -515,18 +517,6 @@ class PlatformService:
 
     def logout_enterprise(self, session_token: str) -> None:
         self.database.revoke_session(session_token)
-
-    def _require_deletion_idle(self) -> None:
-        from .auto_training import active_job
-
-        job = active_job(self.private_root)
-        if job is not None:
-            raise PlatformError(
-                409,
-                "TRAINING_JOB_ACTIVE",
-                "自动训练正在运行，请等待训练结束后再删除数据。",
-                {"job_id": job.get("id")},
-            )
 
     @staticmethod
     def require_role(principal: dict[str, Any], role: str) -> None:
@@ -1009,7 +999,6 @@ class PlatformService:
         payload: Any,
     ) -> dict[str, Any]:
         self.require_owner(principal)
-        self._require_deletion_idle()
         manifest = self.database.tenant_deletion_manifest(tenant_id)
         tenant_batch_ids = self.database.batch_ids_for_tenant(tenant_id)
         if manifest is None or not SAFE_ID.fullmatch(tenant_id):
@@ -1714,18 +1703,55 @@ class PlatformService:
         approve_training: bool,
         issue_tags: list[str],
         notes: str,
+        manual_completion_confirmed: bool,
     ) -> tuple[dict[str, Any], bool]:
         prediction = inspection["prediction"]
-        predicted_outer = prediction.get("outer_corners")
-        predicted_centers = prediction.get("inner_line_centers_px")
-        if not predicted_outer or not isinstance(predicted_centers, dict):
-            raise PlatformError(409, "PREDICTION_INCOMPLETE", "模型结果不完整，必须转入人工高级标注。")
-        outer = corrected_outer or _validate_outer(predicted_outer, prediction.get("source_size"))
-        assert outer is not None
-        centers = corrected_inner or _validate_centers(predicted_centers)
-        assert centers is not None
-        inner_changed = any(abs(float(centers[key]) - float(predicted_centers[key])) > 0.05 for key in centers)
-        outer_changed = any(
+        source_size = prediction.get("source_size")
+
+        # The model can return only one half of the geometry (for example a
+        # valid outer quadrilateral but no inner-frame lines).  A reviewer may
+        # still complete both geometries manually.  Validate each model output
+        # independently, then consider the reviewed geometry before deciding
+        # that the sample is incomplete.
+        try:
+            predicted_outer = _validate_outer(prediction.get("outer_corners"), source_size)
+        except PlatformError:
+            predicted_outer = None
+        try:
+            predicted_centers = _validate_centers(prediction.get("inner_line_centers_px"))
+        except PlatformError:
+            predicted_centers = None
+
+        outer = (
+            _validate_outer(corrected_outer, source_size)
+            if corrected_outer is not None
+            else predicted_outer
+        )
+        centers = (
+            _validate_centers(corrected_inner)
+            if corrected_inner is not None
+            else predicted_centers
+        )
+        if outer is None or centers is None:
+            raise PlatformError(
+                409,
+                "PREDICTION_INCOMPLETE",
+                "模型结果不完整，且缺失部分尚未由人工补齐。",
+            )
+
+        prediction_incomplete = predicted_outer is None or predicted_centers is None
+        if approve_training and prediction_incomplete and not manual_completion_confirmed:
+            raise PlatformError(
+                422,
+                "MANUAL_COMPLETION_CONFIRMATION_REQUIRED",
+                "模型原始结果不完整，请确认外框四角和内框四线均已人工复核后再提交。",
+            )
+
+        inner_changed = predicted_centers is None or any(
+            abs(float(centers[key]) - float(predicted_centers[key])) > 0.05
+            for key in centers
+        )
+        outer_changed = predicted_outer is None or any(
             abs(float(outer[index][axis]) - float(predicted_outer[index][axis])) > 0.05
             for index in range(4)
             for axis in range(2)
@@ -1756,6 +1782,11 @@ class PlatformService:
                 "tenant_id": inspection["tenant_id"],
                 "model_version": inspection.get("model_version"),
                 "confirmed_by_enterprise": not approve_training,
+                "prediction_incomplete_at_review": prediction_incomplete,
+                "manual_completion": {
+                    "outer": predicted_outer is None,
+                    "inner": predicted_centers is None,
+                },
             }
             if approve_training:
                 metadata["ml_feedback"] = {
@@ -1795,6 +1826,7 @@ class PlatformService:
             approve_training=False,
             issue_tags=[],
             notes="企业端确认模型检测结果。",
+            manual_completion_confirmed=False,
         )
         self.database.mark_confirmed(inspection_id)
         return self.inspection(principal, inspection_id)
@@ -1945,6 +1977,7 @@ class PlatformService:
             approve_training=True,
             issue_tags=feedback["issue_tags"],
             notes=feedback["notes"],
+            manual_completion_confirmed=payload.get("manual_completion_confirmed") is True,
         )
         try:
             exported = self.store.export_ml_feedback(
@@ -1964,11 +1997,9 @@ class PlatformService:
             corrected_outer=corrected_outer,
             exported_feedback_id=exported_id,
         )
-        automatic_job = self._maybe_schedule_auto_training()
         return {
             "feedback": self.database.feedback(feedback_id),
             "training_feedback": exported,
-            "automatic_training_job": automatic_job,
         }
 
     def delete_feedback(
@@ -1978,7 +2009,6 @@ class PlatformService:
         payload: Any,
     ) -> dict[str, Any]:
         self.require_owner(principal)
-        self._require_deletion_idle()
         feedback = self.database.feedback(feedback_id)
         if feedback is None:
             raise PlatformError(404, "FEEDBACK_NOT_FOUND", "反馈记录不存在。")
@@ -2030,7 +2060,18 @@ class PlatformService:
         except StudioError as exc:
             raise PlatformError(exc.status, exc.code, exc.message, exc.details) from exc
 
-    def export_feedback_bundle(self, principal: dict[str, Any]) -> tuple[bytes, str]:
+    def _new_export_path(self, prefix: str) -> Path:
+        """Allocate a private archive path and discard abandoned exports after 24 hours."""
+        cutoff = time.time() - 24 * 60 * 60
+        for stale in self.export_root.glob("*.zip"):
+            try:
+                if stale.stat().st_mtime < cutoff:
+                    stale.unlink(missing_ok=True)
+            except OSError:
+                continue
+        return self.export_root / f"{prefix}_{secrets.token_hex(8)}.zip"
+
+    def export_feedback_bundle(self, principal: dict[str, Any]) -> tuple[Path, str]:
         self.require_owner(principal)
         items = self.database.list_feedback(limit=1000)
         manifest = {
@@ -2039,8 +2080,10 @@ class PlatformService:
             "item_count": len(items),
             "description": "CardScope 企业问题样本人工复核包",
         }
-        output = io.BytesIO()
-        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        output = self._new_export_path("feedback")
+        # Images are already compressed.  Storing them directly avoids wasting
+        # server CPU and greatly reduces the chance of a reverse-proxy timeout.
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             rows: list[str] = []
             for item in items:
@@ -2056,7 +2099,7 @@ class PlatformService:
                     json.dumps(item.get("prediction") or {}, ensure_ascii=False, indent=2),
                 )
             archive.writestr("feedback.jsonl", "\n".join(rows) + ("\n" if rows else ""))
-        return output.getvalue(), f"CardScope_feedback_{utc_now()[:10]}.zip"
+        return output, f"CardScope_feedback_{utc_now()[:10]}.zip"
 
     @staticmethod
     def _portable_training_yaml(dataset_root: Path) -> None:
@@ -2069,131 +2112,13 @@ class PlatformService:
             encoding="utf-8",
         )
 
-    @staticmethod
-    def _append_historical_inner(training_root: Path, limit: int) -> dict[str, Any]:
-        history_root = Path(__file__).resolve().parents[1] / "training_history" / "inner_seg"
-        manifest_path = history_root / "manifest.csv"
-        if limit <= 0:
-            return {"requested": 0, "included": 0, "available": manifest_path.is_file()}
-        if not manifest_path.is_file():
-            raise PlatformError(409, "HISTORY_NOT_CONFIGURED", "历史训练数据尚未配置，无法加入导出包。")
-        with manifest_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            rows = [row for row in csv.DictReader(handle) if row.get("split") == "train"]
-        selected = rows[: max(0, min(int(limit), 500))]
-        image_dir = training_root / "inner_seg" / "images" / "train"
-        label_dir = training_root / "inner_seg" / "labels" / "train"
-        image_dir.mkdir(parents=True, exist_ok=True)
-        label_dir.mkdir(parents=True, exist_ok=True)
-        refiner_path = training_root / "inner_refiner_manifest.csv"
-        refiner_fields = ["id", "image", "width", "height", "left", "right", "top", "bottom", "split", "source"]
-        existing_rows: list[dict[str, Any]] = []
-        if refiner_path.is_file():
-            with refiner_path.open("r", encoding="utf-8-sig", newline="") as handle:
-                existing_rows = list(csv.DictReader(handle))
-        included = 0
-        for row in selected:
-            source_image = history_root / str(row.get("image") or "")
-            source_label = history_root / str(row.get("label") or "")
-            if not source_image.is_file() or not source_label.is_file():
-                continue
-            sample_id = f"history_{row['id']}"
-            target_image = image_dir / f"{sample_id}{source_image.suffix.lower()}"
-            target_label = label_dir / f"{sample_id}.txt"
-            shutil.copy2(source_image, target_image)
-            shutil.copy2(source_label, target_label)
-            existing_rows.append(
-                {
-                    "id": sample_id,
-                    "image": target_image.relative_to(training_root).as_posix(),
-                    "width": row.get("width") or "",
-                    "height": row.get("height") or "",
-                    "left": row.get("left") or "",
-                    "right": row.get("right") or "",
-                    "top": row.get("top") or "",
-                    "bottom": row.get("bottom") or "",
-                    "split": "train",
-                    "source": "historical_human_label",
-                }
-            )
-            included += 1
-        with refiner_path.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=refiner_fields)
-            writer.writeheader()
-            writer.writerows(existing_rows)
-        return {"requested": int(limit), "included": included, "available": True}
-
-    @staticmethod
-    def _append_historical_outer(training_root: Path, limit: int) -> dict[str, Any]:
-        history_root = Path(__file__).resolve().parents[1] / "training_history" / "outer_seg"
-        manifest_path = history_root / "manifest.csv"
-        if limit <= 0:
-            return {"requested": 0, "included": 0, "available": manifest_path.is_file()}
-        if not manifest_path.is_file():
-            raise PlatformError(409, "HISTORY_NOT_CONFIGURED", "历史外框训练数据尚未配置，无法加入导出包。")
-        with manifest_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            rows = [row for row in csv.DictReader(handle) if row.get("split") == "train"]
-        selected = rows[: max(0, min(int(limit), 500))]
-        seg_image_dir = training_root / "outer_seg" / "images" / "train"
-        seg_label_dir = training_root / "outer_seg" / "labels" / "train"
-        pose_image_dir = training_root / "outer_pose" / "images" / "train"
-        pose_label_dir = training_root / "outer_pose" / "labels" / "train"
-        for path in (seg_image_dir, seg_label_dir, pose_image_dir, pose_label_dir):
-            path.mkdir(parents=True, exist_ok=True)
-        included = 0
-        for row in selected:
-            source_image = history_root / str(row.get("image") or "")
-            source_label = history_root / str(row.get("label") or "")
-            if not source_image.is_file() or not source_label.is_file():
-                continue
-            label_lines = [
-                line.strip()
-                for line in source_label.read_text(encoding="utf-8-sig").splitlines()
-                if line.strip()
-            ]
-            values = label_lines[0].split() if len(label_lines) == 1 else []
-            if len(values) != 9 or values[0] != "0":
-                continue
-            try:
-                coordinates = [float(value) for value in values[1:]]
-            except ValueError:
-                continue
-            if not all(0.0 <= value <= 1.0 for value in coordinates):
-                continue
-            sample_id = f"history_{row['id']}"
-            image_name = f"{sample_id}{source_image.suffix.lower()}"
-            shutil.copy2(source_image, seg_image_dir / image_name)
-            shutil.copy2(source_image, pose_image_dir / image_name)
-            shutil.copy2(source_label, seg_label_dir / f"{sample_id}.txt")
-            xs = coordinates[0::2]
-            ys = coordinates[1::2]
-            bbox = [
-                (min(xs) + max(xs)) / 2.0,
-                (min(ys) + max(ys)) / 2.0,
-                max(xs) - min(xs),
-                max(ys) - min(ys),
-            ]
-            pose_values: list[float] = [0.0, *bbox]
-            for x_value, y_value in zip(xs, ys):
-                pose_values.extend([x_value, y_value, 2.0])
-            (pose_label_dir / f"{sample_id}.txt").write_text(
-                " ".join(f"{value:.8f}" for value in pose_values) + "\n",
-                encoding="utf-8",
-            )
-            included += 1
-        return {"requested": int(limit), "included": included, "available": True}
-
-    def export_training_bundle(
-        self, principal: dict[str, Any], *, history_limit: int = 0
-    ) -> tuple[bytes, str]:
+    def export_training_bundle(self, principal: dict[str, Any]) -> tuple[Path, str]:
         self.require_owner(principal)
-        approved = [
-            item
-            for item in self.database.list_feedback(status="approved", limit=1000)
-            if item.get("exported_feedback_id")
-        ]
+        approved = self.database.list_training_feedback()
         if not approved:
             raise PlatformError(409, "NO_APPROVED_FEEDBACK", "还没有审核通过并完成标注的反馈，暂时不能导出训练数据。")
-        with tempfile.TemporaryDirectory(prefix="cardscope_training_") as directory:
+        output: Path | None = None
+        with tempfile.TemporaryDirectory(prefix="cardscope_training_", dir=self.export_root) as directory:
             temporary = Path(directory)
             feedback_root = temporary / "feedback"
             (feedback_root / "annotations").mkdir(parents=True)
@@ -2231,10 +2156,15 @@ class PlatformService:
 
                 training_root = temporary / "training_data"
                 conversion = convert_feedback_to_training(feedback_root, training_root, split="train")
-            except (OSError, TypeError, ValueError) as exc:
-                raise PlatformError(500, "TRAINING_EXPORT_FAILED", f"训练数据转换失败：{exc}") from exc
-            inner_history = self._append_historical_inner(training_root, history_limit)
-            outer_history = self._append_historical_outer(training_root, history_limit)
+            except Exception as exc:
+                # Deployment failures frequently come from missing optional ML
+                # imports or filesystem permissions.  Return the actual cause
+                # to the authenticated owner instead of a generic 500 page.
+                raise PlatformError(
+                    500,
+                    "TRAINING_EXPORT_FAILED",
+                    f"训练池导出失败：{type(exc).__name__}: {exc}",
+                ) from exc
             for dataset in ("outer_pose", "outer_seg", "inner_seg"):
                 self._portable_training_yaml(training_root / dataset)
             manifest = {
@@ -2243,23 +2173,29 @@ class PlatformService:
                 "approved_feedback_records": len(approved),
                 "feedback_packages_copied": copied,
                 "converted": conversion.get("converted", {}),
-                "historical_inner": inner_history,
-                "historical_outer": outer_history,
-                "history_policy": "仅加入经过校验的历史 train 集；历史 val/test 永不混入训练导出。",
+                "data_scope": "approved_training_pool_only",
+                "historical_data_included": False,
             }
             (training_root / "export_manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             (training_root / "使用说明.txt").write_text(
-                "CardScope 模型训练数据\n\nouter_pose：外框四角点训练集\nouter_seg：外框分割训练集\ninner_seg：内框分割训练集\ninner_refiner_manifest.csv：内框精修训练清单\nexport_manifest.json：本次导出数量与历史数据来源说明\n",
+                "CardScope 模型训练数据\n\n本压缩包仅包含管理员已批准进入训练池的样本，不混入历史数据。\n\nouter_pose：外框四角点训练集\nouter_seg：外框分割训练集\ninner_seg：内框分割训练集\ninner_refiner_manifest.csv：同一批训练池样本的内框精修训练清单\nexport_manifest.json：本次训练池导出数量与范围说明\n",
                 encoding="utf-8",
             )
-            output = io.BytesIO()
-            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-                for path in sorted(training_root.rglob("*")):
-                    if path.is_file():
-                        archive.write(path, path.relative_to(training_root).as_posix())
-            return output.getvalue(), f"CardScope_training_data_{utc_now()[:10]}.zip"
+            output = self._new_export_path("training_pool")
+            try:
+                # The datasets mostly contain JPEG/PNG files, so deflating the
+                # whole bundle adds latency without a meaningful size saving.
+                with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+                    for path in sorted(training_root.rglob("*")):
+                        if path.is_file():
+                            archive.write(path, path.relative_to(training_root).as_posix())
+            except Exception:
+                output.unlink(missing_ok=True)
+                raise
+        assert output is not None
+        return output, f"CardScope_training_pool_{utc_now()[:10]}.zip"
 
 
 __all__ = ["ISSUE_TAGS", "PlatformError", "PlatformService"]

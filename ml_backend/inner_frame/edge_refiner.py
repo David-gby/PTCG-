@@ -164,6 +164,70 @@ class EdgeRefinerV5(nn.Module):
         return self.score(self.axis_context(fused)).squeeze(1)
 
 
+class EdgeRefinerV6Top(nn.Module):
+    """Top-edge specialist using robust long-line continuity consensus."""
+
+    def __init__(self, input_channels: int = 7, segments: int = 8) -> None:
+        super().__init__()
+        if segments < 5:
+            raise ValueError("EdgeRefinerV6Top requires at least five segments")
+        self.input_channels = input_channels
+        self.tta_height_flip = True
+        self.segments = int(segments)
+        self.features = nn.Sequential(
+            ResidualConvBlock(input_channels, 32),
+            ResidualConvBlock(32, 40, down_height=True),
+            ResidualConvBlock(40, 48, down_height=True),
+            ResidualConvBlock(48, 64, down_height=True),
+            ResidualConvBlock(64, 64, down_height=True),
+        )
+        self.pool_fusion = nn.Sequential(
+            nn.Conv1d(64 * 2, 64, 1, bias=False),
+            nn.GroupNorm(8, 64),
+            nn.SiLU(inplace=True),
+        )
+        self.axis_context = nn.Sequential(
+            DilatedAxisBlock(64, 1),
+            DilatedAxisBlock(64, 2),
+            DilatedAxisBlock(64, 4),
+            nn.Conv1d(64, 32, 1, bias=False),
+            nn.GroupNorm(8, 32),
+            nn.SiLU(inplace=True),
+        )
+        self.score = nn.Conv1d(32, 1, 1)
+        self.segment_score = nn.Conv2d(64, 1, 1)
+        nn.init.zeros_(self.segment_score.weight)
+        if self.segment_score.bias is not None:
+            nn.init.zeros_(self.segment_score.bias)
+        self.continuity_logit_scale = nn.Parameter(torch.tensor(-2.0))
+
+    def _segment_values(self, tensor: torch.Tensor) -> torch.Tensor:
+        return F.adaptive_avg_pool2d(
+            tensor,
+            (self.segments, tensor.shape[-1]),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.features(x)
+        segmented = self._segment_values(features)
+        ordered, _ = segmented.sort(dim=2)
+        trimmed = ordered[:, :, 1:-1].mean(dim=2)
+        pooled = torch.cat((features.mean(dim=2), trimmed), dim=1)
+        learned_logits = self.score(
+            self.axis_context(self.pool_fusion(pooled))
+        ).squeeze(1)
+
+        per_segment_logits = self._segment_values(
+            self.segment_score(features)
+        ).squeeze(1)
+        ordered_logits, _ = per_segment_logits.sort(dim=1)
+        trimmed_logits = ordered_logits[:, 1:-1].mean(dim=1)
+        lower_logits = ordered_logits[:, max(1, self.segments // 4), :]
+        continuity_logits = 0.72 * trimmed_logits + 0.28 * lower_logits
+        continuity_weight = torch.sigmoid(self.continuity_logit_scale)
+        return learned_logits + continuity_weight * continuity_logits
+
+
 def _copy_box(box: dict[str, Any]) -> dict[str, float]:
     return {key: float(box[key]) for key in ("x_left", "x_right", "y_top", "y_bottom")}
 
@@ -541,12 +605,19 @@ def load_refiner(checkpoint_path: str | Path, device: torch.device) -> tuple[nn.
     payload = torch.load(str(checkpoint_path), map_location=device, weights_only=False)
     config = dict(payload.get("config", {}))
     architecture = str(config.get("architecture", "v4")).lower()
-    input_channels = int(config.get("input_channels", 7 if architecture == "v5" else 4))
-    if architecture == "v5":
+    input_channels = int(config.get("input_channels", 7 if architecture in ("v5", "v6_top") else 4))
+    if architecture == "v6_top":
+        model = EdgeRefinerV6Top(
+            input_channels=input_channels,
+            segments=int(config.get("segments", 8)),
+        )
+    elif architecture == "v5":
         model: nn.Module = EdgeRefinerV5(input_channels=input_channels)
     else:
         model = EdgeRefiner(input_channels=input_channels)
     model.load_state_dict(payload["model"])
-    model.tta_height_flip = bool(config.get("tta_height_flip", architecture == "v5"))
+    model.tta_height_flip = bool(
+        config.get("tta_height_flip", architecture in ("v5", "v6_top"))
+    )
     model.to(device).eval()
     return model, config

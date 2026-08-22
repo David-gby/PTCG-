@@ -1,0 +1,28 @@
+{
+  "version": "physical_inner_prior_20260822_v1",
+  "enabled": true,
+  "applies_to_all_layouts": true,
+  "measurement_semantics": "printed_inner_line_inner_edge",
+  "outer_width_mm": 63.0,
+  "outer_height_mm": 88.0,
+  "inner_width_mm": 58.0,
+  "inner_height_mm": 83.0,
+  "horizontal": {
+    "threshold_px": 12.0,
+    "max_residual_px": 32.0,
+    "alpha": 0.15,
+    "first_share": 0.25,
+    "max_visual_score_drop": 0.10,
+    "max_support_drop": 1,
+    "min_candidate_support": 4
+  },
+  "vertical": {
+    "threshold_px": 12.0,
+    "max_residual_px": 32.0,
+    "alpha": 0.10,
+    "first_share": 0.50,
+    "max_visual_score_drop": 0.10,
+    "max_support_drop": 1,
+    "min_candidate_support": 4
+  }
+}
