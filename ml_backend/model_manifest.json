@@ -1,6 +1,6 @@
 {
-  "package_version": "2026-08-22-precropped-v1",
-  "pipeline_version": "ptcg_outer_inner_pipeline_20260822_precropped_v1",
+  "package_version": "2026-08-23-inner-precision-v2",
+  "pipeline_version": "ptcg_outer_inner_pipeline_20260823_inner_precision_v2",
   "feedback_schema_version": "1.0",
   "promotion_policy": {
     "outer_model_replaced": true,
@@ -9,12 +9,18 @@
     "data_policy": "35,186 decoded official card images were catalogued by set/group and split without exact-hash or group leakage. Official pseudo-labels were admitted only after multi-method geometric consensus. These data were combined with manual historical and server-feedback annotations; official training rows were capped and manual validation/test rows remained untouched.",
     "outer_strategy": "Official-corpus silhouette segmentation is blended 75% with the feedback/history production model, followed by a seven-channel high-resolution four-side line refiner. A 0.75 canonical-pixel outward safety margin reduces card cropping. Full-resolution physical snapping and the legacy low-confidence silhouette fallback are disabled for this production route because locked replay showed that they can snap to gray shadows, slabs, sleeves, or texture instead of the physical card edge.",
     "outer_fallback": "Geometry validation and explicit review routing remain active. Segmentation confidence is 0.20, corner calibration is enabled with a validation-selected 1.75 canonical-pixel outward correction, and unresolved geometry is not hidden by an unconditional rescue. The pipeline now forces the configured pose/segmentation paths after normalization, preventing a shallow configuration merge from silently restoring an older default model.",
-    "pre_cropped_strategy": "When the normal outer detector fails on an image already cropped to the physical card, a strict 63:88 aspect gate may propose the four image corners only provisionally. The proposal is accepted only after the independently detected printed inner-line inner edge agrees with the enterprise-confirmed 58x83 mm geometry in the 630x880 canonical plane. Non-card portrait images and inconsistent inner geometry remain explicit failures.",
+    "pre_cropped_strategy": "A normal outer prediction that already fills at least 96.5% of both dimensions, has at most 2.5% border margins and matches 63:88 within 2.5% confirms a trusted enterprise crop. Detector failures retain the older provisional path and must first pass independent inner-frame confirmation. Only these trusted routes and official full-frame assets can enable strong physical inner refinement; ordinary photos remain conservative.",
+    "physical_inner_strategy": "All layouts use the enterprise-confirmed 58x83 mm printed-line inner edge inside the 63x88 mm physical card. For independently trusted outer crops, the learned YOLO/refiner ensemble estimates the inner-frame centre and a high-resolution paired-edge stage locks the opposite-edge spans to the physical dimensions. Validation rejected free gradient-based centre movement because artwork can attract it; long-edge evidence is retained as an audit signal. Untrusted historical photos keep the previous guarded vertical-only soft correction and review routing.",
+    "official_reference_inner_strategy": "When the linked official card image is available, SIFT/AKAZE RANSAC, phase correlation and ECC provide an independent subpixel printed-content translation. That translation is fused with the 58x83 mm span to emit a second reference_fused_inner_frame estimate and quality audit without replacing the learned result silently.",
     "inner_strategy": "A 50/50 checkpoint soup combines the feedback/history seven-channel V5 refiner with the official-corpus refiner. The conservative V6 top-edge specialist remains gated for title/logo interference. On the untouched manual replay this reduces overall mean and P95 error while materially improving left-edge and bottom-edge tails.",
     "rejected_experiments": [
       "A second directed V5 fine-tune improved feedback metrics but regressed the historical test set, so it was not promoted.",
       "Adaptive photometric rescue changed no coordinates in the new candidate and increased latency, so it remains disabled.",
       "A V4 feedback-only inner refiner was more aggressive on the new feedback set but slightly regressed history, so the balanced V5 model was selected."
+      ,"Physical-label V5 fine-tunes and checkpoint interpolation improved isolated edge-localizer tails but regressed the complete YOLO-specialist-gate pipeline, so production refiner weights were not replaced."
+      ,"Fully coupled horizontal and vertical physical corrections were rejected because horizontal test corrections had 0 wins and 3 losses; horizontal geometry remains shadow-only."
+      ,"A high-resolution +/-5 px gradient search for the paired inner-frame centre was rejected after official replay showed severe attraction to artwork and text. Production freezes the learned pair centre and uses high-resolution gradients only for audit."
+      ,"Three-view clean/dark/bright test-time ensembling reduced trusted physical mean error by only about 0.005 px while tripling inner inference cost, so single-view inference remains production default."
     ],
     "validation_evidence": {
       "server_feedback_annotations": 638,
@@ -110,6 +116,38 @@
       "frozen_feedback_common_sample_mean_px_after": 22.098,
       "frozen_feedback_common_sample_p95_px_before": 52.296,
       "frozen_feedback_common_sample_p95_px_after": 29.607
+      ,"physical_spec_outer_mm": "63x88"
+      ,"physical_spec_inner_mm": "58x83"
+      ,"physical_spec_semantics": "printed_inner_line_inner_edge"
+      ,"physical_locked_test_samples": 160
+      ,"physical_locked_test_mean_px_shadow": 1.3143423489
+      ,"physical_locked_test_mean_px_vertical_guarded": 1.3100735989
+      ,"physical_locked_test_image_p95_px_shadow": 2.9949867525
+      ,"physical_locked_test_image_p95_px_vertical_guarded": 2.9949867525
+      ,"physical_locked_test_worst_edge_max_px_shadow": 14.4170016
+      ,"physical_locked_test_worst_edge_max_px_vertical_guarded": 13.929000019
+      ,"physical_locked_test_left_right_coordinate_changes": 0
+      ,"physical_validation_samples": 138
+      ,"physical_validation_mean_px_shadow": 1.4576556802
+      ,"physical_validation_mean_px_vertical_guarded": 1.4526072326
+      ,"physical_new_refiner_promoted": false
+      ,"trusted_physical_locked_official_test_samples": 400
+      ,"trusted_physical_mean_px_before": 2.1840933917
+      ,"trusted_physical_mean_px_after": 0.2231824736
+      ,"trusted_physical_mean_reduction_pct": 89.78
+      ,"trusted_physical_p95_px_before": 9.92985
+      ,"trusted_physical_p95_px_after": 0.5754942784
+      ,"trusted_physical_p95_reduction_pct": 94.20
+      ,"trusted_physical_worst_edge_p95_before": 11.1149769833
+      ,"trusted_physical_worst_edge_p95_after": 0.7657391556
+      ,"trusted_physical_all_sources_samples": 560
+      ,"trusted_physical_all_sources_mean_px_before": 2.1417279020
+      ,"trusted_physical_all_sources_mean_px_after": 0.3946831209
+      ,"trusted_physical_brightness_view_range_p95_px": 0.64645
+      ,"trusted_physical_brightness_view_range_max_px": 1.23
+      ,"trusted_inner_warm_mean_seconds_before": 0.2075
+      ,"trusted_inner_warm_mean_seconds_after": 0.4483
+      ,"trusted_physical_model_weights_changed": false
     }
   },
   "models": [

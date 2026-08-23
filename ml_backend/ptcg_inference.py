@@ -39,6 +39,7 @@ if __package__:
     from .card_quality_processor.outer_photometric_rescue import rescue_outer_prediction
     from .card_quality_processor.pre_cropped_card_recovery import (
         confirm_pre_cropped_inner,
+        promote_tight_pre_cropped_outer,
         propose_pre_cropped_outer,
     )
     from .card_quality_processor.outer_pose_detection import (
@@ -58,6 +59,7 @@ if __package__:
         score_inner_edge_positions,
     )
     from .inner_frame.physical_inner_prior import guarded_refine_physical_inner_box
+    from .inner_frame.joint_physical_refiner import refine_trusted_inner_box
     from .inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 else:
     from boundary_quality_guard import assess_inner_quality, assess_outer_quality
@@ -73,6 +75,7 @@ else:
     from card_quality_processor.outer_photometric_rescue import rescue_outer_prediction
     from card_quality_processor.pre_cropped_card_recovery import (
         confirm_pre_cropped_inner,
+        promote_tight_pre_cropped_outer,
         propose_pre_cropped_outer,
     )
     from card_quality_processor.outer_pose_detection import (
@@ -92,10 +95,11 @@ else:
         score_inner_edge_positions,
     )
     from inner_frame.physical_inner_prior import guarded_refine_physical_inner_box
+    from inner_frame.joint_physical_refiner import refine_trusted_inner_box
     from inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260822_precropped_v1"
+VERSION = "ptcg_outer_inner_pipeline_20260823_inner_precision_v2"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
@@ -250,7 +254,7 @@ def _line_center_geometry(
             "top": [middle_x, centers["top"]],
             "bottom": [middle_x, centers["bottom"]],
         },
-        "coordinate_semantics": "zero_width_red_line_center",
+        "coordinate_semantics": "printed_inner_line_inner_edge",
         "centering_measurements": {
             "border_width_px": widths,
             "border_fraction_of_card": {
@@ -267,7 +271,7 @@ def _line_center_geometry(
                 "bottom_percent": pair["bottom"],
             },
             "formula_contract": {
-                "input_coordinates": "zero_width_red_line_centers",
+                "input_coordinates": "printed_inner_line_inner_edges",
                 "right_width": "rectified_width - 1 - right_line_center_x",
                 "bottom_width": "rectified_height - 1 - bottom_line_center_y",
             },
@@ -652,7 +656,13 @@ class CardFramePipeline:
                 self.torch_device,
             )
 
-    def _infer_inner(self, rectified: np.ndarray) -> dict[str, Any]:
+    def _infer_inner(
+        self,
+        rectified: np.ndarray,
+        *,
+        refinement_image: np.ndarray | None = None,
+        trusted_outer: bool = False,
+    ) -> dict[str, Any]:
         self._load_inner_models()
         assert self._inner_yolo is not None
         assert self._inner_refiner is not None
@@ -891,6 +901,30 @@ class CardFramePipeline:
             evidence_provider=physical_evidence_provider,
         )
         final = _clip_box(physical_prior["box"], width, height)
+        trusted_joint = refine_trusted_inner_box(
+            refinement_image if refinement_image is not None else rectified,
+            final,
+            width,
+            height,
+            self._physical_inner_prior,
+            trusted_outer=trusted_outer,
+        )
+        final = _clip_box(trusted_joint["box"], width, height)
+        if bool(trusted_joint.get("applied", False)):
+            # Preserve the established quality-guard schema while making the
+            # stronger trusted-coordinate decision fully auditable.
+            physical_prior = {
+                **physical_prior,
+                "box": dict(final),
+                "applied": True,
+                "applied_axes": trusted_joint.get("applied_axes", []),
+                "reason": trusted_joint.get("reason"),
+                "before": trusted_joint.get("before", physical_prior.get("before", {})),
+                "after": trusted_joint.get("after", physical_prior.get("after", {})),
+                "trusted_joint": trusted_joint,
+            }
+        else:
+            physical_prior = {**physical_prior, "trusted_joint": trusted_joint}
         result = {
             "success": True,
             "coordinate_space": "rectified_card_pixels",
@@ -912,6 +946,7 @@ class CardFramePipeline:
                 for edge, hypothesis in global_hypotheses.items()
             },
             "physical_inner_prior": physical_prior,
+            "trusted_outer_geometry": bool(trusted_outer),
             "_overlay": _draw_inner_boxes(rectified, base, final),
         }
         result["quality_assessment"] = assess_inner_quality(result)
@@ -957,6 +992,9 @@ class CardFramePipeline:
                 metrics["photometric_rescue"] = rescue_metrics
                 outer["metrics"] = metrics
                 outer = self._refine_outer(refinement_image, outer)
+                tight_crop = promote_tight_pre_cropped_outer(image_bgr, outer)
+                if tight_crop is not None:
+                    outer = tight_crop
             if not outer.get("success"):
                 provisional_outer = propose_pre_cropped_outer(image_bgr, outer)
                 if provisional_outer is not None:
@@ -995,7 +1033,33 @@ class CardFramePipeline:
 
         rectification["confidence"] = float(outer.get("confidence", 0.0))
         rectified = rectification["rectified_image"]
-        inner = self._infer_inner(rectified)
+        recovery_profile = outer.get("metrics", {}).get("pre_cropped_card_recovery", {})
+        recovery_profile = recovery_profile if isinstance(recovery_profile, Mapping) else {}
+        trusted_outer = bool(
+            str(outer.get("method", "")) == "official_full_frame_alpha"
+            or recovery_profile.get("trusted_outer_geometry", False)
+        )
+        highres_rectified = None
+        if trusted_outer:
+            refinement_scale = int(
+                self._physical_inner_prior.get("trusted_joint", {}).get(
+                    "refinement_scale", 2
+                )
+            )
+            if refinement_scale > 1:
+                highres_result = rectify_card_by_points(
+                    image_bgr,
+                    outer["points"],
+                    (output_size[0] * refinement_scale, output_size[1] * refinement_scale),
+                    self.outer_config,
+                )
+                if highres_result.get("success"):
+                    highres_rectified = highres_result.get("rectified_image")
+        inner = self._infer_inner(
+            rectified,
+            refinement_image=highres_rectified,
+            trusted_outer=trusted_outer,
+        )
         if not inner.get("success"):
             return {
                 "success": False,
@@ -1056,6 +1120,40 @@ class CardFramePipeline:
                     "_rectified_image": rectified,
                     "_inner_overlay": inner["_overlay"],
                 }
+            # The first pass supplies the independent semantic confirmation.
+            # Once confirmed, the exact full-frame outer coordinate system is
+            # trusted and a second inner pass may safely apply the strong paired
+            # 58 x 83 mm refinement.
+            refinement_scale = int(
+                self._physical_inner_prior.get("trusted_joint", {}).get(
+                    "refinement_scale", 2
+                )
+            )
+            confirmed_highres = None
+            if refinement_scale > 1:
+                confirmed_highres_result = rectify_card_by_points(
+                    image_bgr,
+                    outer["points"],
+                    (output_size[0] * refinement_scale, output_size[1] * refinement_scale),
+                    self.outer_config,
+                )
+                if confirmed_highres_result.get("success"):
+                    confirmed_highres = confirmed_highres_result.get("rectified_image")
+            confirmed_inner = self._infer_inner(
+                rectified,
+                refinement_image=confirmed_highres,
+                trusted_outer=True,
+            )
+            if bool(confirmed_inner.get("success", False)):
+                inner = confirmed_inner
+                metrics = dict(outer.get("metrics", {}))
+                profile = dict(metrics.get("pre_cropped_card_recovery", {}))
+                profile["trusted_outer_geometry"] = True
+                profile["strong_inner_refinement_applied"] = bool(
+                    inner.get("physical_inner_prior", {}).get("trusted_joint", {}).get("applied", False)
+                )
+                metrics["pre_cropped_card_recovery"] = profile
+                outer["metrics"] = metrics
             outer["message"] = (
                 "Pre-cropped full-frame card confirmed by the independently "
                 "detected 58x83 mm printed inner-line inner edge."

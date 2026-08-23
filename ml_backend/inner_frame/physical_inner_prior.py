@@ -42,11 +42,12 @@ def _scaled_config(
     config: Mapping[str, Any],
     axis: str,
     scale: float,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     axis_config = config.get(axis, {})
     if not isinstance(axis_config, Mapping):
         axis_config = {}
     return {
+        "correction_enabled": bool(axis_config.get("correction_enabled", True)),
         "threshold_px": float(axis_config.get("threshold_px", 12.0)) * scale,
         "max_residual_px": float(axis_config.get("max_residual_px", 32.0)) * scale,
         "alpha": float(axis_config.get("alpha", 0.10)),
@@ -229,6 +230,13 @@ def guarded_refine_physical_inner_box(
     for axis, first, second, expected, settings in axis_specs:
         current_size = output[second] - output[first]
         residual = current_size - expected
+        if not bool(settings["correction_enabled"]):
+            audit[axis] = {
+                "applied": False,
+                "reason": "axis_correction_shadow_mode",
+                "residual_px": round(residual, 4),
+            }
+            continue
         if abs(residual) <= settings["threshold_px"]:
             audit[axis] = {
                 "applied": False,

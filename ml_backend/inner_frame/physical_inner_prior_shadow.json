@@ -1,6 +1,6 @@
 {
-  "version": "physical_inner_prior_20260823_v3_trusted_joint_highres",
-  "enabled": true,
+  "version": "physical_inner_prior_20260822_shadow_v1",
+  "enabled": false,
   "applies_to_all_layouts": true,
   "measurement_semantics": "printed_inner_line_inner_edge",
   "outer_width_mm": 63.0,
@@ -8,7 +8,6 @@
   "inner_width_mm": 58.0,
   "inner_height_mm": 83.0,
   "horizontal": {
-    "correction_enabled": false,
     "threshold_px": 12.0,
     "max_residual_px": 32.0,
     "alpha": 0.15,
@@ -18,7 +17,6 @@
     "min_candidate_support": 4
   },
   "vertical": {
-    "correction_enabled": true,
     "threshold_px": 12.0,
     "max_residual_px": 32.0,
     "alpha": 0.10,
@@ -26,17 +24,5 @@
     "max_visual_score_drop": 0.10,
     "max_support_drop": 1,
     "min_candidate_support": 4
-  },
-  "trusted_joint": {
-    "enabled": true,
-    "refinement_scale": 2,
-    "segments": 10,
-    "center_search_radius_px": 0.0,
-    "center_step_px": 0.25,
-    "center_movement_penalty": 0.035,
-    "segment_support_threshold": 0.35,
-    "min_supporting_segments": 4,
-    "require_visual_support": false,
-    "center_policy": "freeze_learned_pair_center"
   }
 }

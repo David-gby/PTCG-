@@ -1183,6 +1183,42 @@ def detect_automatic_reference_registration(
         "warnings": warnings,
     }
 
+    # When the exact official card image is available, registration supplies
+    # a second, model-independent centre estimate.  The enterprise-confirmed
+    # printed inner-line inner edge is 58 x 83 mm inside the 63 x 88 mm card,
+    # so only its translated centre is unknown after rectification.
+    expected_inner_width = float(w) * 58.0 / 63.0
+    expected_inner_height = float(h) * 83.0 / 88.0
+    inner_center_x = 0.5 * float(w) + corrected_dx
+    inner_center_y = 0.5 * float(h) + corrected_dy
+    result["reference_fused_inner_frame"] = {
+        "success": True,
+        "method": "official_reference_translation_plus_physical_span",
+        "measurement_semantics": "printed_inner_line_inner_edge",
+        "coordinate_space": "rectified_card_pixels",
+        "confidence": result["confidence"],
+        "physical_spec_mm": {
+            "outer": {"width": 63.0, "height": 88.0},
+            "inner": {"width": 58.0, "height": 83.0},
+        },
+        "final_box": {
+            "left": round(inner_center_x - 0.5 * expected_inner_width, 4),
+            "right": round(inner_center_x + 0.5 * expected_inner_width, 4),
+            "top": round(inner_center_y - 0.5 * expected_inner_height, 4),
+            "bottom": round(inner_center_y + 0.5 * expected_inner_height, 4),
+        },
+        "center": {"x": round(inner_center_x, 4), "y": round(inner_center_y, 4)},
+        "expected_size_px": {
+            "width": round(expected_inner_width, 4),
+            "height": round(expected_inner_height, 4),
+        },
+        "quality_gate": {
+            "registration_geometry_warning": geometry_warning,
+            "method_agreement_score": result["registration"]["method_agreement_score"],
+            "warnings": list(warnings),
+        },
+    }
+
     debug = {
         "normalized_reference": normalized_reference,
         "reference_points": reference_points,

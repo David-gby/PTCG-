@@ -1,5 +1,5 @@
 {
-  "version": "physical_inner_prior_20260823_v3_trusted_joint_highres",
+  "version": "physical_inner_prior_20260822_vertical_candidate_v1",
   "enabled": true,
   "applies_to_all_layouts": true,
   "measurement_semantics": "printed_inner_line_inner_edge",
@@ -26,17 +26,5 @@
     "max_visual_score_drop": 0.10,
     "max_support_drop": 1,
     "min_candidate_support": 4
-  },
-  "trusted_joint": {
-    "enabled": true,
-    "refinement_scale": 2,
-    "segments": 10,
-    "center_search_radius_px": 0.0,
-    "center_step_px": 0.25,
-    "center_movement_penalty": 0.035,
-    "segment_support_threshold": 0.35,
-    "min_supporting_segments": 4,
-    "require_visual_support": false,
-    "center_policy": "freeze_learned_pair_center"
   }
 }

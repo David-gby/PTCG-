@@ -122,6 +122,9 @@ def _make_inner_engine(device: str, models: PipelineModels | None = None) -> Car
     engine._inner_refiner_top_config = None
     engine._gate = json.loads(engine.models.inner_gate.read_text(encoding="utf-8"))
     engine._top_gate = json.loads(engine.models.inner_top_gate.read_text(encoding="utf-8"))
+    engine._physical_inner_prior = json.loads(
+        engine.models.inner_physical_prior.read_text(encoding="utf-8")
+    )
     return engine
 
 

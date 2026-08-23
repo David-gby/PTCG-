@@ -122,9 +122,15 @@ def main() -> int:
     parser.add_argument("--top-left", type=Path, default=None)
     parser.add_argument("--top", type=Path, default=None)
     parser.add_argument("--top-gate", type=Path, default=None)
+    parser.add_argument("--physical-prior", type=Path, default=None)
     parser.add_argument("--splits", default="val,test")
     parser.add_argument("--device", default="0")
     parser.add_argument("--official-multiview", action="store_true")
+    parser.add_argument(
+        "--trusted-outer",
+        action="store_true",
+        help="Evaluate the strong 58x83 joint optimizer for independently trusted outer crops.",
+    )
     parser.add_argument("--max-official-per-split", type=int, default=400)
     args = parser.parse_args()
 
@@ -145,6 +151,9 @@ def main() -> int:
         inner_refiner_top=args.top.resolve() if args.top else defaults.inner_refiner_top,
         inner_top_gate=args.top_gate.resolve() if args.top_gate else defaults.inner_top_gate,
         inner_gate=defaults.inner_gate,
+        inner_physical_prior=(
+            args.physical_prior.resolve() if args.physical_prior else defaults.inner_physical_prior
+        ),
     )
     engine = _make_inner_engine(args.device, models)
     rows: list[dict[str, Any]] = []
@@ -161,12 +170,25 @@ def main() -> int:
             views = _views(image) if args.official_multiview and source["source"].startswith("official_") else [("clean", image)]
             predictions: list[dict[str, float]] = []
             reviews: list[bool] = []
+            physical_audits: list[dict[str, Any]] = []
             for _, view in views:
-                result = engine._infer_inner(view)  # noqa: SLF001
+                refinement_view = None
+                if args.trusted_outer:
+                    refinement_view = cv2.resize(
+                        view,
+                        (view.shape[1] * 2, view.shape[0] * 2),
+                        interpolation=cv2.INTER_CUBIC,
+                    )
+                result = engine._infer_inner(  # noqa: SLF001
+                    view,
+                    refinement_image=refinement_view,
+                    trusted_outer=args.trusted_outer,
+                )
                 if not result.get("success"):
                     raise RuntimeError(str(result.get("error_code") or "inner_failed"))
                 predictions.append({edge: float(result["final_box"][edge]) for edge in EDGES})
                 reviews.append(bool(result.get("quality_assessment", {}).get("review_recommended")))
+                physical_audits.append(dict(result.get("physical_inner_prior", {})))
             prediction = {edge: float(np.median([box[edge] for box in predictions])) for edge in EDGES}
             errors = {edge: abs(prediction[edge] - target[edge]) for edge in EDGES}
             signed = {edge: prediction[edge] - target[edge] for edge in EDGES}
@@ -178,6 +200,12 @@ def main() -> int:
                     "edge_max_px": max(errors.values()),
                     "view_max_range_px": max(ranges.values()) if len(predictions) > 1 else None,
                     "review_recommended": any(reviews),
+                    "physical_prior_applied": any(
+                        bool(audit.get("applied")) for audit in physical_audits
+                    ),
+                    "physical_prior_audit_json": json.dumps(
+                        physical_audits, ensure_ascii=False, separators=(",", ":")
+                    ),
                     **{f"prediction_{edge}": prediction[edge] for edge in EDGES},
                     **{f"target_{edge}": target[edge] for edge in EDGES},
                     **{f"error_{edge}_px": errors[edge] for edge in EDGES},
@@ -202,8 +230,14 @@ def main() -> int:
         "top_left": str(args.top_left.resolve()) if args.top_left else str(defaults.inner_refiner_top_left),
         "top": str(args.top.resolve()) if args.top else str(defaults.inner_refiner_top),
         "top_gate": str(args.top_gate.resolve()) if args.top_gate else str(defaults.inner_top_gate),
+        "physical_prior": (
+            str(args.physical_prior.resolve())
+            if args.physical_prior
+            else str(defaults.inner_physical_prior)
+        ),
         "manifest": str(manifest),
         "splits": sorted(requested),
+        "trusted_outer": bool(args.trusted_outer),
         "overall": _aggregate(rows),
         "by_source": {
             source: _aggregate([row for row in rows if row["source"] == source])

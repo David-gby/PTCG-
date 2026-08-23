@@ -155,12 +155,12 @@ def line_center_geometry(box: Mapping[str, float]) -> dict[str, Any]:
             "top": [middle_x, centers["top"]],
             "bottom": [middle_x, centers["bottom"]],
         },
-        "coordinate_semantics": "zero_width_red_line_center",
+        "coordinate_semantics": "printed_inner_line_inner_edge",
         "centering_measurements": {
             "border_width_px": widths,
             "centering_pair_percent": pair,
             "formula_contract": {
-                "input_coordinates": "zero_width_red_line_centers",
+                "input_coordinates": "printed_inner_line_inner_edges",
                 "right_width": "630 - 1 - right_line_center_x",
                 "bottom_width": "880 - 1 - bottom_line_center_y",
             },

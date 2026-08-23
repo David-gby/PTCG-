@@ -50,11 +50,13 @@ class PhysicalInnerPriorTests(unittest.TestCase):
         self.assertEqual(assessment["risk"], "normal")
 
     def test_moderate_size_outlier_is_only_softly_corrected_with_visual_support(self) -> None:
+        config = json.loads(json.dumps(CONFIG))
+        config["horizontal"]["correction_enabled"] = True
         result = guarded_refine_physical_inner_box(
             {"left": 20.0, "right": 615.0, "top": 20.0, "bottom": 860.0},
             630,
             880,
-            CONFIG,
+            config,
             evidence_provider=strong_evidence,
         )
         self.assertTrue(result["applied"])
@@ -69,6 +71,19 @@ class PhysicalInnerPriorTests(unittest.TestCase):
         result = guarded_refine_physical_inner_box(box, 630, 880, CONFIG)
         self.assertFalse(result["applied"])
         self.assertEqual(result["box"], box)
+
+    def test_axis_can_remain_in_shadow_mode_while_still_assessing_residual(self) -> None:
+        config = json.loads(json.dumps(CONFIG))
+        config["horizontal"]["correction_enabled"] = False
+        box = {"left": 20.0, "right": 615.0, "top": 25.0, "bottom": 855.0}
+        result = guarded_refine_physical_inner_box(
+            box, 630, 880, config, evidence_provider=strong_evidence
+        )
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["box"], box)
+        self.assertEqual(
+            result["axes"]["horizontal"]["reason"], "axis_correction_shadow_mode"
+        )
 
     def test_severe_residual_is_reviewed_instead_of_hidden(self) -> None:
         box = {"left": 0.0, "right": 620.0, "top": 0.0, "bottom": 870.0}

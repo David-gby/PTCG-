@@ -1,0 +1,47 @@
+CardScope v0.8.6 - inner precision update
+
+Package type:
+- Complete deployable cardscope/ application directory.
+- Includes all current runtime code and every model file required by model_manifest.json.
+- Excludes .git, platform_workspace, uploads, outputs, runs, local databases,
+  credentials, caches and training/evaluation artifacts outside the application tree.
+
+Changed runtime files:
+- VERSION
+- ml_backend/ptcg_inference.py
+- ml_backend/inner_frame/physical_inner_prior.json
+- ml_backend/inner_frame/joint_physical_refiner.py (new)
+- ml_backend/card_quality_processor/pre_cropped_card_recovery.py
+- platform_app/reference_registration.py
+- ml_backend/model_manifest.json
+
+Evaluation/training tooling only:
+- ml_backend/training/official_corpus/evaluate_inner_pipeline_consensus.py
+- ml_backend/training/official_corpus/evaluate_trusted_physical_inner.py (new)
+
+Tests:
+- tests/test_joint_physical_refiner.py (new)
+- tests/test_pre_cropped_card_recovery.py
+- tests/test_reference_registration_inner.py (new)
+
+Model weight files are unchanged in this update. Restart the CardScope service after replacing runtime files.
+
+Important production rule:
+- Strong 58x83 mm span locking is enabled only when outer geometry is independently trusted.
+- Ordinary historical photos must remain on the conservative route. On 95 locked real-photo
+  samples, the conservative route achieved 1.382 px mean four-edge MAE and 3.177 px P95;
+  forcibly treating the old photos as exact crops regressed to 2.158 px and 4.094 px.
+- Do not add a global force-trusted switch during deployment.
+
+Server update (existing installation):
+1. Back up /var/lib/cardscope/platform_workspace.
+2. Upload the zip without extracting it into the live release directory.
+3. Run:
+   sudo bash /opt/cardscope/current/deployment/server/update_release.sh <zip-path> <https://public-domain>
+4. Confirm /api/platform/v1/health and that the returned model/pipeline version is
+   ptcg_outer_inner_pipeline_20260823_inner_precision_v2.
+
+Never overwrite or delete:
+- /var/lib/cardscope/platform_workspace
+- enterprise accounts, inspections, feedback, annotations and training-pool data
+- /etc/cardscope/cardscope.env, domain/TLS configuration or access credentials

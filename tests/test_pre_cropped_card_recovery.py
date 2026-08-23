@@ -4,6 +4,7 @@ import unittest
 
 from ml_backend.card_quality_processor.pre_cropped_card_recovery import (
     confirm_pre_cropped_inner,
+    promote_tight_pre_cropped_outer,
     propose_pre_cropped_outer,
 )
 
@@ -15,6 +16,23 @@ class FakeImage:
 
 
 class PreCroppedCardRecoveryTests(unittest.TestCase):
+    def test_successful_near_full_frame_detection_promotes_enterprise_crop(self) -> None:
+        image = FakeImage(880, 630)
+        prediction = {
+            "success": True,
+            "points": [[5.0, 5.0], [624.0, 5.0], [624.0, 874.0], [5.0, 874.0]],
+            "confidence": 0.95,
+            "metrics": {},
+        }
+        result = promote_tight_pre_cropped_outer(image, prediction)
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["method"], "trusted_tight_pre_cropped_full_frame")
+        self.assertEqual(result["points"][0], [0.0, 0.0])
+        self.assertTrue(
+            result["metrics"]["pre_cropped_card_recovery"]["trusted_outer_geometry"]
+        )
+
     def test_proposes_full_frame_only_after_outer_failure(self) -> None:
         image = FakeImage(880, 630)
         proposal = propose_pre_cropped_outer(

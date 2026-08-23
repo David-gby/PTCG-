@@ -8,6 +8,88 @@ CARD_HEIGHT_OVER_WIDTH = 88.0 / 63.0
 KEYPOINT_NAMES = ("tl", "tr", "br", "bl")
 
 
+def promote_tight_pre_cropped_outer(
+    image: Any,
+    prediction: Mapping[str, Any],
+    *,
+    max_aspect_error: float = 0.025,
+    min_bbox_fill: float = 0.965,
+    max_margin_ratio: float = 0.025,
+) -> dict[str, Any] | None:
+    """Use the image boundary when a successful detector confirms a tight crop.
+
+    This is stricter than the failure-recovery branch: a normal outer model
+    must already place the card on at least 96.5% of both image dimensions and
+    all four bbox margins must be tiny.  The detector therefore supplies
+    independent semantic evidence while the enterprise crop supplies the more
+    accurate coordinate system used by the 58 x 83 mm inner-frame constraint.
+    """
+
+    if (
+        getattr(image, "size", 0) == 0
+        or len(getattr(image, "shape", ())) != 3
+        or not bool(prediction.get("success", False))
+        or prediction.get("points") is None
+    ):
+        return None
+    height, width = image.shape[:2]
+    if height < 280 or width < 190:
+        return None
+    aspect = float(height) / max(float(width), 1.0)
+    aspect_error = abs(aspect - CARD_HEIGHT_OVER_WIDTH) / CARD_HEIGHT_OVER_WIDTH
+    if aspect_error > float(max_aspect_error):
+        return None
+    try:
+        xs = [float(point[0]) for point in prediction["points"]]
+        ys = [float(point[1]) for point in prediction["points"]]
+    except (IndexError, TypeError, ValueError):
+        return None
+    bbox_width = max(xs) - min(xs)
+    bbox_height = max(ys) - min(ys)
+    fill_x = bbox_width / max(float(width - 1), 1.0)
+    fill_y = bbox_height / max(float(height - 1), 1.0)
+    margins = [
+        min(xs) / max(float(width - 1), 1.0),
+        (float(width - 1) - max(xs)) / max(float(width - 1), 1.0),
+        min(ys) / max(float(height - 1), 1.0),
+        (float(height - 1) - max(ys)) / max(float(height - 1), 1.0),
+    ]
+    if min(fill_x, fill_y) < float(min_bbox_fill) or max(margins) > float(max_margin_ratio):
+        return None
+
+    points = [
+        [0.0, 0.0],
+        [float(width - 1), 0.0],
+        [float(width - 1), float(height - 1)],
+        [0.0, float(height - 1)],
+    ]
+    output = dict(prediction)
+    metrics = dict(prediction.get("metrics", {}))
+    metrics["pre_cropped_card_recovery"] = {
+        "version": "pre_cropped_card_recovery_20260823_v2_trusted_tight_crop",
+        "provisional": False,
+        "confirmed": True,
+        "trusted_outer_geometry": True,
+        "reason": "successful_outer_detector_confirms_tight_63x88_crop",
+        "source_points": prediction.get("points"),
+        "input_size": [int(width), int(height)],
+        "input_aspect_ratio": aspect,
+        "relative_aspect_error": aspect_error,
+        "detector_bbox_fill": {"x": fill_x, "y": fill_y},
+        "detector_margin_ratios": margins,
+    }
+    output.update(
+        {
+            "points": points,
+            "bbox": [0.0, 0.0, float(width - 1), float(height - 1)],
+            "method": "trusted_tight_pre_cropped_full_frame",
+            "message": "Tight enterprise outer crop confirmed by the outer detector.",
+            "metrics": metrics,
+        }
+    )
+    return output
+
+
 def propose_pre_cropped_outer(
     image: Any,
     failed_prediction: Mapping[str, Any],
