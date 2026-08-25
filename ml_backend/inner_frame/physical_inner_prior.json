@@ -1,5 +1,5 @@
 {
-  "version": "physical_inner_prior_20260823_v3_trusted_joint_highres",
+  "version": "physical_inner_prior_20260824_v4_single_edge_anchor",
   "enabled": true,
   "applies_to_all_layouts": true,
   "measurement_semantics": "printed_inner_line_inner_edge",
@@ -37,6 +37,26 @@
     "segment_support_threshold": 0.35,
     "min_supporting_segments": 4,
     "require_visual_support": false,
-    "center_policy": "freeze_learned_pair_center"
+    "center_policy": "paired_or_single_trusted_edge_then_conservative_fallback",
+    "single_anchor_enabled": true,
+    "anchor_search_radius_px": 12.0,
+    "anchor_step_px": 0.5,
+    "anchor_movement_penalty": 0.012,
+    "paired_anchor_min_supporting_segments": 7,
+    "paired_anchor_min_robust_z": 2.5,
+    "paired_anchor_min_segment_q30": 0.25,
+    "paired_anchor_max_anchor_move_px": 4.0,
+    "paired_anchor_max_span_error_px": 3.0,
+    "single_anchor_min_supporting_segments": 10,
+    "single_anchor_min_robust_z": 4.0,
+    "single_anchor_min_segment_q30": 0.5,
+    "single_anchor_max_anchor_move_px": 4.0,
+    "single_anchor_min_trust_margin": 1.0,
+    "weak_anchor_min_supporting_segments": 6,
+    "weak_anchor_min_robust_z": 1.6,
+    "weak_anchor_min_segment_q30": 0.1,
+    "weak_anchor_max_anchor_move_px": 12.0,
+    "single_anchor_max_inferred_move_px": 48.0,
+    "fallback_center_lock": true
   }
 }

@@ -1,6 +1,6 @@
 {
-  "package_version": "2026-08-23-inner-precision-v2",
-  "pipeline_version": "ptcg_outer_inner_pipeline_20260823_inner_precision_v2",
+  "package_version": "2026-08-25-feedback-physical-v3",
+  "pipeline_version": "ptcg_outer_inner_pipeline_20260825_feedback_physical_v3",
   "feedback_schema_version": "1.0",
   "promotion_policy": {
     "outer_model_replaced": true,
@@ -12,7 +12,7 @@
     "pre_cropped_strategy": "A normal outer prediction that already fills at least 96.5% of both dimensions, has at most 2.5% border margins and matches 63:88 within 2.5% confirms a trusted enterprise crop. Detector failures retain the older provisional path and must first pass independent inner-frame confirmation. Only these trusted routes and official full-frame assets can enable strong physical inner refinement; ordinary photos remain conservative.",
     "physical_inner_strategy": "All layouts use the enterprise-confirmed 58x83 mm printed-line inner edge inside the 63x88 mm physical card. For independently trusted outer crops, the learned YOLO/refiner ensemble estimates the inner-frame centre and a high-resolution paired-edge stage locks the opposite-edge spans to the physical dimensions. Validation rejected free gradient-based centre movement because artwork can attract it; long-edge evidence is retained as an audit signal. Untrusted historical photos keep the previous guarded vertical-only soft correction and review routing.",
     "official_reference_inner_strategy": "When the linked official card image is available, SIFT/AKAZE RANSAC, phase correlation and ECC provide an independent subpixel printed-content translation. That translation is fused with the 58x83 mm span to emit a second reference_fused_inner_frame estimate and quality audit without replacing the learned result silently.",
-    "inner_strategy": "A 50/50 checkpoint soup combines the feedback/history seven-channel V5 refiner with the official-corpus refiner. The conservative V6 top-edge specialist remains gated for title/logo interference. On the untouched manual replay this reduces overall mean and P95 error while materially improving left-edge and bottom-edge tails.",
+    "inner_strategy": "A mixed-expert inner-frame stage keeps the historically stable V5 model for left/right edges and uses the new 1,080-sample feedback-trained V7 expert for top/bottom edges. A conservative V6 top-edge specialist remains gated for title/logo interference. High-resolution paired evidence is preferred; when exactly one horizontal or vertical printed inner edge is trustworthy, the opposite edge is inferred from the enterprise-confirmed fixed 580x830 canonical inner-edge span. Conflicting or weak anchors fall back to the learned centre and are review-routed rather than forced.",
     "rejected_experiments": [
       "A second directed V5 fine-tune improved feedback metrics but regressed the historical test set, so it was not promoted.",
       "Adaptive photometric rescue changed no coordinates in the new candidate and increased latency, so it remains disabled.",
@@ -21,6 +21,8 @@
       ,"Fully coupled horizontal and vertical physical corrections were rejected because horizontal test corrections had 0 wins and 3 losses; horizontal geometry remains shadow-only."
       ,"A high-resolution +/-5 px gradient search for the paired inner-frame centre was rejected after official replay showed severe attraction to artwork and text. Production freezes the learned pair centre and uses high-resolution gradients only for audit."
       ,"Three-view clean/dark/bright test-time ensembling reduced trusted physical mean error by only about 0.005 px while tripling inner inference cost, so single-view inference remains production default."
+      ,"Feedback-only outer segmentation improved the new feedback set but catastrophically forgot the historical outer test set (image-corner mean 7.11 to 12.13 px), so it was rejected."
+      ,"A history-plus-feedback outer candidate improved initial detector localization but its interaction with the frozen line refiner regressed the final historical P95 and maximum error, so the deployed outer weights remain unchanged."
     ],
     "validation_evidence": {
       "server_feedback_annotations": 638,
@@ -148,6 +150,26 @@
       ,"trusted_inner_warm_mean_seconds_before": 0.2075
       ,"trusted_inner_warm_mean_seconds_after": 0.4483
       ,"trusted_physical_model_weights_changed": false
+      ,"feedback_physical_annotations_scanned_20260825": 1157
+      ,"feedback_physical_unique_inner_samples_20260825": 1080
+      ,"feedback_physical_inner_test_images_20260825": 198
+      ,"inner_mixed_pipeline_mean_px_before_20260825": 0.9387550008
+      ,"inner_mixed_pipeline_mean_px_after_20260825": 0.9233673705
+      ,"inner_mixed_pipeline_p95_px_before_20260825": 2.6016996200
+      ,"inner_mixed_pipeline_p95_px_after_20260825": 2.3779116025
+      ,"inner_mixed_pipeline_review_rate_before_20260825": 0.0757575758
+      ,"inner_mixed_pipeline_review_rate_after_20260825": 0.0606060606
+      ,"single_edge_replay_samples_20260825": 1157
+      ,"single_edge_replay_failures_20260825": 0
+      ,"single_edge_anchor_axes_used_20260825": 30
+      ,"single_edge_physical_mae_before_20260825": 1.6779818496
+      ,"single_edge_physical_mae_after_20260825": 1.6774786085
+      ,"outer_feedback_joint_candidate_test_samples_20260825": 39
+      ,"outer_feedback_joint_candidate_final_mean_px_20260825": 7.0075369164
+      ,"outer_feedback_current_final_mean_px_20260825": 7.5269419929
+      ,"outer_history_joint_candidate_final_mean_px_20260825": 4.6802592654
+      ,"outer_history_current_final_mean_px_20260825": 4.4806
+      ,"outer_feedback_20260825_promoted": false
     }
   },
   "models": [
@@ -192,6 +214,13 @@
       "architecture": "PyTorch seven-channel V5 edge-strip refiner checkpoint soup",
       "size_bytes": 1023567,
       "sha256": "EA5EEAD8836C10B6BCE7CDDC881DBC5F2EF5B3C8D7008CF97CBD293E3FDA336C"
+    },
+    {
+      "file": "models/inner_frame_edge_refiner_horizontal_v7.pt",
+      "role": "Feedback-physical horizontal-edge expert used for top/bottom localization inside the mixed inner-frame pipeline",
+      "architecture": "PyTorch seven-channel V5 edge-strip refiner trained with row-blocked physical feedback splits",
+      "size_bytes": 3058457,
+      "sha256": "B29F8C5D2C78DDE0890D33434E31750FDFE47D74FF46F5640398E86674D721CD"
     },
     {
       "file": "models/inner_frame_edge_refiner_top_left.pt",

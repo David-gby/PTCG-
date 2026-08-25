@@ -194,6 +194,22 @@ def _validate_centers(value: Any) -> dict[str, float] | None:
     return result
 
 
+def _validate_fixed_inner_box(value: Any) -> dict[str, float] | None:
+    """Validate the human-review contract for the 58 mm × 83 mm inner edge."""
+    result = _validate_centers(value)
+    if result is None:
+        return None
+    width = result["right"] - result["left"]
+    height = result["bottom"] - result["top"]
+    if abs(width - 580.0) > 0.05 or abs(height - 830.0) > 0.05:
+        raise PlatformError(
+            422,
+            "INVALID_INNER_FIXED_SIZE",
+            "人工内框标注必须使用固定 580 × 830 px 标准框。",
+        )
+    return result
+
+
 def _validate_outer(value: Any, source_size: Any) -> list[list[float]] | None:
     if value is None:
         return None
@@ -1728,7 +1744,7 @@ class PlatformService:
             else predicted_outer
         )
         centers = (
-            _validate_centers(corrected_inner)
+            (_validate_fixed_inner_box(corrected_inner) if approve_training else _validate_centers(corrected_inner))
             if corrected_inner is not None
             else predicted_centers
         )
@@ -1744,7 +1760,7 @@ class PlatformService:
             raise PlatformError(
                 422,
                 "MANUAL_COMPLETION_CONFIRMATION_REQUIRED",
-                "模型原始结果不完整，请确认外框四角和内框四线均已人工复核后再提交。",
+                "模型原始结果不完整，请确认外框四角和固定 580 × 830 内框均已人工复核后再提交。",
             )
 
         inner_changed = predicted_centers is None or any(
@@ -1954,13 +1970,13 @@ class PlatformService:
                 corrected_outer=corrected_outer,
             )
             return {"feedback": self.database.feedback(feedback_id)}
-        corrected = _validate_centers(payload.get("corrected_inner", feedback.get("corrected_inner")))
+        corrected = _validate_fixed_inner_box(payload.get("corrected_inner", feedback.get("corrected_inner")))
         source_size = feedback.get("prediction", {}).get("source_size")
         corrected_outer = _validate_outer(
             payload.get("corrected_outer", feedback.get("corrected_outer")), source_size
         )
         if corrected is None:
-            raise PlatformError(422, "CORRECTION_REQUIRED", "批准训练前必须确认四条内框修正线。")
+            raise PlatformError(422, "CORRECTION_REQUIRED", "批准训练前必须确认固定 580 × 830 px 内框。")
         if corrected_outer is None:
             corrected_outer = _validate_outer(feedback.get("prediction", {}).get("outer_corners"), source_size)
         if corrected_outer is None:

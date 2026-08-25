@@ -81,13 +81,25 @@ class PlatformRegressionTests(unittest.TestCase):
         self.assertNotIn("renderList()", select_block)
         self.assertIn("updateFeedbackListSelection()", select_block)
 
+    def test_admin_uses_fixed_580_by_830_inner_annotation_box(self) -> None:
+        html = (ROOT / "web" / "admin.html").read_text(encoding="utf-8")
+        javascript = (ROOT / "web" / "admin.js").read_text(encoding="utf-8")
+        common = (ROOT / "web" / "common.js").read_text(encoding="utf-8")
+        self.assertIn('data-admin-inner-box', html)
+        self.assertIn('width="580" height="830"', html)
+        self.assertIn("fixedInnerBoxControls", javascript)
+        self.assertNotIn('C.correctionControls($("adminCorrectionControls")', javascript)
+        self.assertIn("const FIXED_INNER_WIDTH = 580", common)
+        self.assertIn("const FIXED_INNER_HEIGHT = 830", common)
+        self.assertIn("尺寸已锁定，只移动整个框", common)
+
     def test_reviewer_can_complete_an_incomplete_prediction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ManualCompletionStore()
             service = PlatformService(store, Path(directory) / "workspace")
             source_size = {"width": 640, "height": 900}
             manual_outer = [[8, 7], [631, 8], [632, 891], [7, 892]]
-            manual_inner = {"left": 25.0, "right": 604.0, "top": 21.1, "bottom": 854.0}
+            manual_inner = {"left": 25.0, "right": 605.0, "top": 21.1, "bottom": 851.1}
             inspection = {
                 "id": "ins_incomplete",
                 "tenant_id": "ten_incomplete",
@@ -137,9 +149,23 @@ class PlatformRegressionTests(unittest.TestCase):
                 {"outer": False, "inner": True},
             )
 
+            with self.assertRaises(PlatformError) as wrong_fixed_size:
+                service._save_accepted_label(
+                    inspection,
+                    labeler="enterprise",
+                    reviewer="reviewer",
+                    corrected_inner={"left": 25.0, "right": 604.0, "top": 25.0, "bottom": 854.0},
+                    corrected_outer=copy.deepcopy(manual_outer),
+                    approve_training=True,
+                    issue_tags=["inner_frame_wrong"],
+                    notes="reject deformable inner box",
+                    manual_completion_confirmed=True,
+                )
+            self.assertEqual(wrong_fixed_size.exception.code, "INVALID_INNER_FIXED_SIZE")
+
         javascript = (ROOT / "web" / "admin.js").read_text(encoding="utf-8")
         self.assertIn("manual_completion_confirmed: missingOuter || missingInner", javascript)
-        self.assertIn("本次画面上的外框四角和内框四线将作为全人工标注写入训练池", javascript)
+        self.assertIn("本次画面上的外框四角和固定 580 × 830 内框将作为全人工标注写入训练池", javascript)
 
     def test_delete_detaches_foreign_key_references(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

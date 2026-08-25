@@ -27,6 +27,217 @@ def _support(matrix: np.ndarray, position: float, threshold: float) -> tuple[int
     return int(np.count_nonzero(values >= threshold)), float(np.quantile(values, 0.30))
 
 
+def _edge_anchor_search(
+    profile: np.ndarray,
+    segment_profiles: np.ndarray,
+    *,
+    current: float,
+    scale: float,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Search one physical edge independently of its opposite edge.
+
+    A valid printed boundary must be supported by many disjoint segments of the
+    long side.  This deliberately gives less weight to one locally strong peak,
+    which is the common failure mode around logos, title ornaments and artwork.
+    """
+
+    radius = float(config.get("anchor_search_radius_px", 12.0)) * scale
+    step = max(float(config.get("anchor_step_px", 0.5)) * scale, 0.5)
+    movement_penalty = float(config.get("anchor_movement_penalty", 0.012))
+    support_threshold = float(config.get("segment_support_threshold", 0.35))
+    min_support = int(config.get("single_anchor_min_supporting_segments", 6))
+    min_robust_z = float(config.get("single_anchor_min_robust_z", 1.6))
+    min_q30 = float(config.get("single_anchor_min_segment_q30", 0.10))
+    profile_z = _robust_z(profile)
+    offsets = np.arange(-radius, radius + 0.5 * step, step, dtype=np.float32)
+    candidates: list[dict[str, Any]] = []
+    for offset in offsets:
+        position = float(current) + float(offset)
+        if position < 1.0 or position > profile.size - 2.0:
+            continue
+        aggregate = _sample(profile, position)
+        robust_z = _sample(profile_z, position)
+        support, q30 = _support(segment_profiles, position, support_threshold)
+        canonical_move = float(offset) / max(scale, 1e-6)
+        # Support across separate long-side segments is more reliable than a
+        # single gradient magnitude.  The small movement term only breaks ties.
+        objective = (
+            aggregate
+            + 0.24 * q30
+            + 0.10 * support
+            + 0.10 * robust_z
+            - movement_penalty * canonical_move * canonical_move
+        )
+        candidates.append(
+            {
+                "position": position,
+                "objective": objective,
+                "aggregate_score": aggregate,
+                "robust_z": robust_z,
+                "supporting_segments": support,
+                "segment_q30": q30,
+                "movement_from_model_px": canonical_move,
+            }
+        )
+    if not candidates:
+        return {"trusted": False, "reason": "no_valid_anchor_candidate"}
+    selected = max(candidates, key=lambda value: float(value["objective"]))
+    trusted = bool(
+        int(selected["supporting_segments"]) >= min_support
+        and float(selected["robust_z"]) >= min_robust_z
+        and float(selected["segment_q30"]) >= min_q30
+    )
+    trust_score = (
+        0.40 * float(selected["robust_z"])
+        + 0.35 * float(selected["segment_q30"])
+        + 0.25 * float(selected["supporting_segments"])
+    )
+    return {
+        "trusted": trusted,
+        "reason": "long_edge_anchor_supported" if trusted else "anchor_support_below_gate",
+        "selected": selected,
+        "trust_score": trust_score,
+        "candidate_count": len(candidates),
+        "thresholds": {
+            "min_supporting_segments": min_support,
+            "min_robust_z": min_robust_z,
+            "min_segment_q30": min_q30,
+        },
+    }
+
+
+def _select_axis_from_anchors(
+    profile: np.ndarray,
+    segment_profiles: np.ndarray,
+    *,
+    current_first: float,
+    current_second: float,
+    expected_span: float,
+    scale: float,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Choose paired, one-sided, or conservative centre-locked geometry."""
+
+    first = _edge_anchor_search(
+        profile,
+        segment_profiles,
+        current=current_first,
+        scale=scale,
+        config=config,
+    )
+    second = _edge_anchor_search(
+        profile,
+        segment_profiles,
+        current=current_second,
+        scale=scale,
+        config=config,
+    )
+    def gate(anchor: Mapping[str, Any], prefix: str) -> bool:
+        selected = anchor.get("selected", {})
+        return bool(
+            int(selected.get("supporting_segments", 0))
+            >= int(config.get(f"{prefix}_min_supporting_segments", 10 if prefix == "single_anchor" else 7))
+            and float(selected.get("robust_z", 0.0))
+            >= float(config.get(f"{prefix}_min_robust_z", 4.0 if prefix == "single_anchor" else 2.5))
+            and float(selected.get("segment_q30", 0.0))
+            >= float(config.get(f"{prefix}_min_segment_q30", 0.5 if prefix == "single_anchor" else 0.25))
+            and abs(float(selected.get("movement_from_model_px", 1e9)))
+            <= float(config.get(f"{prefix}_max_anchor_move_px", 4.0))
+        )
+
+    first_paired = gate(first, "paired_anchor")
+    second_paired = gate(second, "paired_anchor")
+    first_single = gate(first, "single_anchor")
+    second_single = gate(second, "single_anchor")
+    first_weak = gate(first, "weak_anchor")
+    second_weak = gate(second, "weak_anchor")
+    first_position = float(first.get("selected", {}).get("position", current_first))
+    second_position = float(second.get("selected", {}).get("position", current_second))
+    max_pair_error = float(config.get("paired_anchor_max_span_error_px", 4.0)) * scale
+    max_anchor_move = float(config.get("single_anchor_max_inferred_move_px", 48.0)) * scale
+    trust_margin = float(config.get("single_anchor_min_trust_margin", 1.0))
+    allow_single = bool(config.get("single_anchor_enabled", True))
+    span_error = (second_position - first_position) - expected_span
+
+    selected_first: float | None = None
+    selected_second: float | None = None
+    decision = ""
+    anchor_edge: str | None = None
+    inferred_edge: str | None = None
+
+    if first_paired and second_paired and abs(span_error) <= max_pair_error:
+        center = 0.5 * (first_position + second_position)
+        selected_first = center - 0.5 * expected_span
+        selected_second = center + 0.5 * expected_span
+        decision = "paired_anchor_consensus"
+    elif allow_single and first_single and not second_weak:
+        inferred = first_position + expected_span
+        score_margin = float(first.get("trust_score", 0.0)) - float(second.get("trust_score", 0.0))
+        if abs(inferred - current_second) <= max_anchor_move and score_margin >= trust_margin:
+            selected_first, selected_second = first_position, inferred
+            decision, anchor_edge, inferred_edge = "single_first_anchor", "first", "second"
+    elif allow_single and second_single and not first_weak:
+        inferred = second_position - expected_span
+        score_margin = float(second.get("trust_score", 0.0)) - float(first.get("trust_score", 0.0))
+        if abs(inferred - current_first) <= max_anchor_move and score_margin >= trust_margin:
+            selected_first, selected_second = inferred, second_position
+            decision, anchor_edge, inferred_edge = "single_second_anchor", "second", "first"
+    if selected_first is None or selected_second is None:
+        if not bool(config.get("fallback_center_lock", True)):
+            return {
+                "accepted": False,
+                "reason": "anchor_ambiguity_without_safe_fallback",
+                "first_anchor": first,
+                "second_anchor": second,
+                "independent_span_error_px": span_error / max(scale, 1e-6),
+            }
+        center = 0.5 * (float(current_first) + float(current_second))
+        selected_first = center - 0.5 * expected_span
+        selected_second = center + 0.5 * expected_span
+        decision = "learned_center_physical_span_fallback"
+
+    if selected_first < 1.0 or selected_second > profile.size - 2.0:
+        half_span = 0.5 * expected_span
+        low_center = 1.0 + half_span
+        high_center = float(profile.size - 2.0) - half_span
+        if low_center > high_center:
+            return {
+                "accepted": False,
+                "reason": "physical_span_larger_than_image",
+                "first_anchor": first,
+                "second_anchor": second,
+                "independent_span_error_px": span_error / max(scale, 1e-6),
+            }
+        bounded_center = float(
+            np.clip(0.5 * (float(current_first) + float(current_second)), low_center, high_center)
+        )
+        selected_first = bounded_center - half_span
+        selected_second = bounded_center + half_span
+        decision = "bounded_learned_center_physical_span_fallback"
+        anchor_edge = None
+        inferred_edge = None
+    return {
+        "accepted": True,
+        "reason": decision,
+        "selected": {"first": selected_first, "second": selected_second},
+        "anchor_edge": anchor_edge,
+        "inferred_edge": inferred_edge,
+        "first_anchor": first,
+        "second_anchor": second,
+        "gates": {
+            "first_paired": first_paired,
+            "second_paired": second_paired,
+            "first_single": first_single,
+            "second_single": second_single,
+            "first_weak": first_weak,
+            "second_weak": second_weak,
+        },
+        "independent_span_error_px": span_error / max(scale, 1e-6),
+        "expected_span": expected_span,
+    }
+
+
 def _axis_profiles(
     feature: np.ndarray,
     box: Mapping[str, float],
@@ -215,7 +426,7 @@ def refine_trusted_inner_box(
         * float(physical_config.get("inner_height_mm", 83.0))
         / float(physical_config.get("outer_height_mm", 88.0))
     )
-    horizontal = _search_axis(
+    horizontal = _select_axis_from_anchors(
         x_profile,
         x_segments,
         current_first=scaled["left"],
@@ -224,7 +435,7 @@ def refine_trusted_inner_box(
         scale=scale_x,
         config=config,
     )
-    vertical = _search_axis(
+    vertical = _select_axis_from_anchors(
         y_profile,
         y_segments,
         current_first=scaled["top"],

@@ -1,0 +1,20 @@
+请部署 CardScope v0.8.8（内框反馈物理增强版）。
+
+本包仍是原 cardscope 项目目录结构，不需要重新建数据库。
+
+重点：
+- 新增一个 2.92 MB 的内框上下边专家模型。
+- 支持内框缺一条边时，依据固定 580x830 内沿尺寸从可靠单边推出对边。
+- 外框新实验没有通过全部历史回归，因此外框生产权重未替换，避免回退。
+
+建议：
+1. 备份当前服务器 cardscope 目录和持久化数据。
+2. 覆盖本包 cardscope 目录中的程序文件；保留服务器 data/uploads。
+3. 重启服务。
+4. 确认健康接口 release_version=0.8.8。
+5. 检测结果中的 model_version 应为 ptcg_outer_inner_pipeline_20260825_feedback_physical_v3。
+
+本版无数据库迁移；如异常可直接恢复上一版目录。
+
+具体修改见 CHANGED_FILES_20260825_FEEDBACK_PHYSICAL_V3.csv。
+完整依据见 MODEL_OPTIMIZATION_REPORT_20260825.md。

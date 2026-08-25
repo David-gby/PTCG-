@@ -119,6 +119,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--refiner", type=Path, required=True)
+    parser.add_argument("--horizontal", type=Path, default=None)
     parser.add_argument("--top-left", type=Path, default=None)
     parser.add_argument("--top", type=Path, default=None)
     parser.add_argument("--top-gate", type=Path, default=None)
@@ -147,6 +148,9 @@ def main() -> int:
         outer_line_gate=defaults.outer_line_gate,
         inner_yolo=defaults.inner_yolo,
         inner_refiner=args.refiner.resolve(),
+        inner_refiner_horizontal=(
+            args.horizontal.resolve() if args.horizontal else defaults.inner_refiner_horizontal
+        ),
         inner_refiner_top_left=args.top_left.resolve() if args.top_left else defaults.inner_refiner_top_left,
         inner_refiner_top=args.top.resolve() if args.top else defaults.inner_refiner_top,
         inner_top_gate=args.top_gate.resolve() if args.top_gate else defaults.inner_top_gate,
@@ -227,6 +231,11 @@ def main() -> int:
         writer.writerows(rows)
     report = {
         "refiner": str(args.refiner.resolve()),
+        "horizontal": (
+            str(args.horizontal.resolve())
+            if args.horizontal
+            else str(defaults.inner_refiner_horizontal)
+        ),
         "top_left": str(args.top_left.resolve()) if args.top_left else str(defaults.inner_refiner_top_left),
         "top": str(args.top.resolve()) if args.top else str(defaults.inner_refiner_top),
         "top_gate": str(args.top_gate.resolve()) if args.top_gate else str(defaults.inner_top_gate),

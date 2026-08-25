@@ -189,7 +189,7 @@
     item.corrected_outer = null;
     selectFeedback(item);
     $("adminReviewNotes").value = notes;
-    setActionStatus("已恢复这张图片的模型检测结果；可以重新拖动绿点和红线。", "");
+    setActionStatus("已恢复这张图片的模型检测位置；内框已按原中心转换为固定 580 × 830 标准框。", "");
   }
 
   function setActionStatus(message = "", type = "") {
@@ -229,7 +229,7 @@
     $("createTenantButton").classList.toggle("hidden", !tenants || !isOwner());
     $("createAdminButton").classList.toggle("hidden", !admins || !isOwner());
     const titles = {
-      feedback: ["模型反馈审核台", "同时修正外框四角和内框四线，审核后可批量导出训练数据"],
+      feedback: ["模型反馈审核台", "同时修正外框四角和固定 580 × 830 内框，审核后可批量导出训练数据"],
       inspections: ["企业检测记录", "企业每完成一张检测都会自动保存在这里，可以查看内外框、居中度和反馈状态"],
       tenants: ["企业访问管理", "为每家企业创建独立检测空间，管理链接有效期和使用状态"],
       admins: ["管理员账号管理", "创建独立标注账号，并控制启用状态和登录密码"],
@@ -757,9 +757,9 @@
     state.getOuterCorrection = C.outerCorrectionControls(
       $("adminOuterControls"), outerDefaults, sourceSize, $("adminOuterOverlay"), (points) => { state.correctedOuter = points; }
     );
-    const innerDefaults = item.corrected_inner || item.prediction?.inner_line_centers_px || { left: 25, right: 604, top: 25, bottom: 854 };
-    state.getInnerCorrection = C.correctionControls($("adminCorrectionControls"), innerDefaults, (values) => {
-      state.correctedInner = values; C.renderLines($("adminInnerStage"), "data-admin-edge", values);
+    const innerDefaults = item.corrected_inner || item.prediction?.inner_line_centers_px || { left: 25, right: 605, top: 25, bottom: 855 };
+    state.getInnerCorrection = C.fixedInnerBoxControls($("adminCorrectionControls"), innerDefaults, (values) => {
+      state.correctedInner = values;
     }, $("adminInnerStage"));
     const locked = item.review_status !== "pending";
     setReviewControlsDisabled(locked);
@@ -829,6 +829,9 @@
       if (!correctedInner || !(correctedInner.left < correctedInner.right && correctedInner.top < correctedInner.bottom)) {
         setActionStatus("内框坐标无效：必须满足左 < 右、上 < 下。", "error"); return;
       }
+      if (Math.abs((correctedInner.right - correctedInner.left) - 580) > 0.05 || Math.abs((correctedInner.bottom - correctedInner.top) - 830) > 0.05) {
+        setActionStatus("内框尺寸无效：人工训练标注必须使用固定 580 × 830 px 标准框。", "error"); return;
+      }
       const outerProblem = outerDraftProblem(correctedOuter);
       if (outerProblem) { setActionStatus(`外框坐标无效：${outerProblem}`, "error"); return; }
       if (outerKey(correctedOuter) !== state.rectifiedOuterKey) {
@@ -850,7 +853,7 @@
       );
       if (missingOuter || missingInner) {
         const missingParts = [missingOuter ? "外框" : "", missingInner ? "内框" : ""].filter(Boolean).join("、");
-        if (!window.confirm(`模型没有生成完整的${missingParts}结果。\n\n继续后，本次画面上的外框四角和内框四线将作为全人工标注写入训练池。请确认两侧标注都已经逐项检查准确。`)) return;
+        if (!window.confirm(`模型没有生成完整的${missingParts}结果。\n\n继续后，本次画面上的外框四角和固定 580 × 830 内框将作为全人工标注写入训练池。请确认两侧标注都已经逐项检查准确。`)) return;
       }
       payload = {
         ...payload,
@@ -917,8 +920,8 @@
       $("adminInnerImage").src = state.rectifiedObjectUrl;
       state.rectifiedOuterKey = outerKey(state.getOuterCorrection?.() || state.correctedOuter);
       state.innerZoom?.fit();
-      setActionStatus("外框校正图已刷新。现在可以直接拖动红线，并用方向键进行 0.1 px 微调。", "");
-      C.toast("已按人工外框重新生成校正图，请继续确认红色内框线。");
+      setActionStatus("外框校正图已刷新。现在可以拖动固定 580 × 830 红框整体对齐，并用方向键进行 0.1 px 微调。", "");
+      C.toast("已按人工外框重新生成校正图，请继续确认固定红色内框。");
     } catch (error) { C.toast(error.message, "error"); }
     finally { $("refreshRectification").disabled = state.reviewInFlight || state.selected?.review_status !== "pending"; }
   }

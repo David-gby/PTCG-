@@ -205,6 +205,157 @@
     return () => ({ ...values });
   }
 
+  const FIXED_INNER_WIDTH = 580;
+  const FIXED_INNER_HEIGHT = 830;
+  const RECTIFIED_WIDTH = 630;
+  const RECTIFIED_HEIGHT = 880;
+
+  function normalizeFixedInnerBox(initial) {
+    const fallback = { left: 25, right: 605, top: 25, bottom: 855 };
+    const source = initial && typeof initial === "object" ? initial : fallback;
+    const left = Number(source.left);
+    const right = Number(source.right);
+    const top = Number(source.top);
+    const bottom = Number(source.bottom);
+    const centerX = Number.isFinite(left) && Number.isFinite(right) ? (left + right) / 2 : 315;
+    const centerY = Number.isFinite(top) && Number.isFinite(bottom) ? (top + bottom) / 2 : 440;
+    const originX = Math.round(clamp(centerX - FIXED_INNER_WIDTH / 2, 0, RECTIFIED_WIDTH - 1 - FIXED_INNER_WIDTH) * 10) / 10;
+    const originY = Math.round(clamp(centerY - FIXED_INNER_HEIGHT / 2, 0, RECTIFIED_HEIGHT - 1 - FIXED_INNER_HEIGHT) * 10) / 10;
+    return {
+      left: originX,
+      right: Math.round((originX + FIXED_INNER_WIDTH) * 10) / 10,
+      top: originY,
+      bottom: Math.round((originY + FIXED_INNER_HEIGHT) * 10) / 10,
+    };
+  }
+
+  function fixedInnerBoxControls(container, initial, onChange, stage) {
+    let values = normalizeFixedInnerBox(initial);
+    let drag = null;
+    const box = stage?.querySelector("[data-admin-inner-box]") || null;
+    container.replaceChildren();
+
+    const summary = document.createElement("div");
+    summary.className = "fixed-inner-summary";
+    summary.innerHTML = '<div><strong>580 × 830 px</strong><span>尺寸已锁定，只移动整个框</span></div><span class="fixed-inner-badge">印刷线内沿</span>';
+
+    const coordinates = document.createElement("div");
+    coordinates.className = "fixed-inner-coordinate-grid";
+    const editableInputs = {};
+    const outputs = {};
+    const addCoordinate = (labelText, key, editable) => {
+      const label = document.createElement("label");
+      label.className = editable ? "fixed-inner-coordinate editable-coordinate" : "fixed-inner-coordinate inferred-coordinate";
+      const caption = document.createElement("span");
+      caption.textContent = labelText;
+      const field = editable ? document.createElement("input") : document.createElement("output");
+      if (editable) {
+        field.type = "number"; field.min = "0"; field.max = "49"; field.step = "0.1";
+        field.setAttribute("aria-label", `${labelText}坐标`);
+        editableInputs[key] = field;
+      } else {
+        outputs[key] = field;
+      }
+      label.append(caption, field); coordinates.append(label);
+    };
+    addCoordinate("左边 X", "left", true);
+    addCoordinate("上边 Y", "top", true);
+    addCoordinate("右边 X（自动）", "right", false);
+    addCoordinate("下边 Y（自动）", "bottom", false);
+    container.append(summary, coordinates);
+
+    const render = () => {
+      if (box) {
+        box.setAttribute("x", String(values.left));
+        box.setAttribute("y", String(values.top));
+        box.setAttribute("width", String(FIXED_INNER_WIDTH));
+        box.setAttribute("height", String(FIXED_INNER_HEIGHT));
+      }
+      editableInputs.left.value = values.left.toFixed(1);
+      editableInputs.top.value = values.top.toFixed(1);
+      outputs.right.textContent = values.right.toFixed(1);
+      outputs.bottom.textContent = values.bottom.toFixed(1);
+      onChange({ ...values });
+    };
+    const setOrigin = (rawLeft, rawTop) => {
+      const leftValue = Number(rawLeft);
+      const topValue = Number(rawTop);
+      const next = normalizeFixedInnerBox({
+        left: Number.isFinite(leftValue) ? leftValue : values.left,
+        right: (Number.isFinite(leftValue) ? leftValue : values.left) + FIXED_INNER_WIDTH,
+        top: Number.isFinite(topValue) ? topValue : values.top,
+        bottom: (Number.isFinite(topValue) ? topValue : values.top) + FIXED_INNER_HEIGHT,
+      });
+      values = next; render();
+    };
+    const updateLeftInput = () => {
+      if (editableInputs.left.value !== "") setOrigin(editableInputs.left.value, values.top);
+    };
+    const updateTopInput = () => {
+      if (editableInputs.top.value !== "") setOrigin(values.left, editableInputs.top.value);
+    };
+    editableInputs.left.addEventListener("input", updateLeftInput);
+    editableInputs.left.addEventListener("change", updateLeftInput);
+    editableInputs.top.addEventListener("input", updateTopInput);
+    editableInputs.top.addEventListener("change", updateTopInput);
+
+    if (stage && box) {
+      stage._cardscopeInnerCleanup?.();
+      const surface = stage.querySelector(".annotation-surface") || stage;
+      const onPointerDown = (event) => {
+        if (stage.dataset.locked === "true" || event.button !== 0 || event.shiftKey || event.target !== box) return;
+        event.preventDefault();
+        const bounds = surface.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return;
+        drag = {
+          id: event.pointerId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          left: values.left,
+          top: values.top,
+          scaleX: RECTIFIED_WIDTH / bounds.width,
+          scaleY: RECTIFIED_HEIGHT / bounds.height,
+        };
+        box.classList.add("selected");
+        stage.focus(); stage.setPointerCapture?.(event.pointerId);
+      };
+      const onPointerMove = (event) => {
+        if (!drag || drag.id !== event.pointerId) return;
+        setOrigin(
+          drag.left + (event.clientX - drag.clientX) * drag.scaleX,
+          drag.top + (event.clientY - drag.clientY) * drag.scaleY,
+        );
+      };
+      const onPointerEnd = (event) => {
+        if (!drag || drag.id !== event.pointerId) return;
+        drag = null; box.classList.remove("selected");
+        try { stage.releasePointerCapture?.(event.pointerId); } catch (_) { /* already released */ }
+      };
+      const onKeyDown = (event) => {
+        if (stage.dataset.locked === "true" || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const step = event.shiftKey ? 1 : 0.1;
+        const x = values.left + (event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0);
+        const y = values.top + (event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0);
+        setOrigin(x, y);
+      };
+      stage.addEventListener("pointerdown", onPointerDown);
+      stage.addEventListener("pointermove", onPointerMove);
+      stage.addEventListener("pointerup", onPointerEnd);
+      stage.addEventListener("pointercancel", onPointerEnd);
+      stage.addEventListener("keydown", onKeyDown);
+      stage._cardscopeInnerCleanup = () => {
+        stage.removeEventListener("pointerdown", onPointerDown);
+        stage.removeEventListener("pointermove", onPointerMove);
+        stage.removeEventListener("pointerup", onPointerEnd);
+        stage.removeEventListener("pointercancel", onPointerEnd);
+        stage.removeEventListener("keydown", onKeyDown);
+      };
+    }
+    render();
+    return () => ({ ...values });
+  }
+
   function zoomPanControls(viewport, surface, initialSize, buttons = {}) {
     let sourceWidth = Math.max(1, Number(initialSize?.width || 1));
     let sourceHeight = Math.max(1, Number(initialSize?.height || 1));
@@ -390,5 +541,5 @@
     return () => points.map((point) => [...point]);
   }
 
-  window.CardScope = { api, token, clearToken, imageUrl, toast, formatDate, renderLines, correctionControls, renderOuter, outerCorrectionControls, zoomPanControls };
+  window.CardScope = { api, token, clearToken, imageUrl, toast, formatDate, renderLines, correctionControls, normalizeFixedInnerBox, fixedInnerBoxControls, renderOuter, outerCorrectionControls, zoomPanControls };
 })();

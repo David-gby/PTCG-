@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CardScope · 反馈审核台</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=0.8.3">
+  <link rel="stylesheet" href="/assets/styles.css?v=0.8.7">
 </head>
 <body>
   <div class="app-shell admin-shell">
@@ -51,7 +51,7 @@
               <div id="reviewActionStatus" class="review-action-status hidden" role="status" aria-live="polite"></div>
               <div class="review-body">
                 <section class="admin-preview">
-                  <div class="annotation-help"><strong>精细标注</strong><span>滚轮缩放 · Shift/中键拖动平移 · 点击红线后方向键每次微调 0.1 px，Shift + 方向键每次 1 px</span></div>
+                  <div class="annotation-help"><strong>精细标注</strong><span>滚轮缩放 · Shift/中键拖动平移 · 拖动红色标准框整体对齐 · 方向键每次微调 0.1 px，Shift + 方向键每次 1 px</span></div>
                   <div class="admin-dual-preview">
                     <figure><figcaption><div><strong>外框标注</strong><span>拖动绿色角点贴合卡牌物理边缘</span></div><div class="zoom-actions"><button id="outerZoomOut" type="button" aria-label="缩小外框图">−</button><button id="outerFit" type="button">适合</button><button id="outerZoomIn" type="button" aria-label="放大外框图">＋</button><output id="outerZoomText">100%</output></div></figcaption>
                       <div class="annotation-viewport editable-outer" id="adminOuterStage" tabindex="0" aria-label="外框标注画布">
@@ -61,25 +61,24 @@
                         </div>
                       </div>
                     </figure>
-                    <figure><figcaption><div><strong>内框标注</strong><span>直接拖动红线贴合印刷内框</span></div><div class="zoom-actions"><button id="innerZoomOut" type="button" aria-label="缩小内框图">−</button><button id="innerFit" type="button">适合</button><button id="innerZoomIn" type="button" aria-label="放大内框图">＋</button><output id="innerZoomText">100%</output></div></figcaption>
-                      <div class="annotation-viewport editable" id="adminInnerStage" tabindex="0" aria-label="内框标注画布">
+                    <figure><figcaption><div><strong>内框标注</strong><span>拖动固定 580 × 830 标准框，任意两边对齐即可确定内框</span></div><div class="zoom-actions"><button id="innerZoomOut" type="button" aria-label="缩小内框图">−</button><button id="innerFit" type="button">适合</button><button id="innerZoomIn" type="button" aria-label="放大内框图">＋</button><output id="innerZoomText">100%</output></div></figcaption>
+                      <div class="annotation-viewport editable fixed-inner-editor" id="adminInnerStage" tabindex="0" aria-label="固定580乘830内框标注画布">
                         <div class="annotation-surface" id="adminInnerSurface">
                           <img id="adminInnerImage" alt="内框人工标注校正图" draggable="false">
-                          <div class="detect-line inner-line vertical" data-admin-edge="left"></div>
-                          <div class="detect-line inner-line vertical" data-admin-edge="right"></div>
-                          <div class="detect-line inner-line horizontal" data-admin-edge="top"></div>
-                          <div class="detect-line inner-line horizontal" data-admin-edge="bottom"></div>
+                          <svg id="adminInnerOverlay" class="fixed-inner-overlay" viewBox="0 0 630 880" preserveAspectRatio="none" aria-hidden="true">
+                            <rect data-admin-inner-box x="25" y="25" width="580" height="830" rx="0"/>
+                          </svg>
                         </div>
                       </div>
                     </figure>
                   </div>
-                  <div class="line-legend"><span><i class="legend-line green"></i>人工外框四角</span><span><i class="legend-line red"></i>人工内框四线</span></div>
+                  <div class="line-legend"><span><i class="legend-line green"></i>人工外框四角</span><span><i class="legend-line red"></i>固定 580 × 830 人工内框</span></div>
                 </section>
                 <section class="review-fields">
                   <div><span class="field-label">企业标记的问题</span><div id="reviewTags" class="tag-list"></div></div>
                   <div><span class="field-label">企业说明</span><p id="reviewNotes" class="review-copy">—</p></div>
                   <fieldset><legend>外框四角点（原图坐标）</legend><div id="adminOuterControls" class="outer-correction-controls"></div><button id="refreshRectification" class="button quiet compact" type="button">应用外框并刷新内框图</button></fieldset>
-                  <fieldset><legend>内框四条线（校正图 630 × 880）</legend><div id="adminCorrectionControls" class="correction-controls"></div></fieldset>
+                  <fieldset><legend>固定标准内框（校正图 630 × 880）</legend><div id="adminCorrectionControls" class="fixed-inner-controls"></div></fieldset>
                   <label class="textarea-field">审核备注<textarea id="adminReviewNotes" maxlength="2000" placeholder="记录判断依据或后续处理要求"></textarea></label>
                   <div id="outerWarning" class="warning-box hidden">企业标记了外框问题：请拖动绿色角点并刷新校正图，再确认红色内框线。</div>
                 </section>
@@ -197,7 +196,7 @@
         <label>管理员姓名<input id="adminUserLabel" name="label" maxlength="80" required placeholder="例如：标注员小李"></label>
         <label>登录账号（可留空自动生成）<input id="adminUsername" name="username" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,63}" placeholder="例如：annotator_li"></label>
         <label>初始密码（可留空自动生成）<input id="adminPassword" name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="至少 10 个字符"></label>
-        <div class="permission-summary"><strong>固定权限：人工标注</strong><span>查看待审核反馈 · 调整外框四角 · 调整内框四线 · 批准进入训练池 · 舍弃不合格样本</span><small>舍弃只会移出待审核队列并保留审计记录，不会永久删除；无权管理企业、其他管理员、导出、训练、模型部署和回滚。</small></div>
+        <div class="permission-summary"><strong>固定权限：人工标注</strong><span>查看待审核反馈 · 调整外框四角 · 移动固定内框 · 批准进入训练池 · 舍弃不合格样本</span><small>舍弃只会移出待审核队列并保留审计记录，不会永久删除；无权管理企业、其他管理员、导出、训练、模型部署和回滚。</small></div>
       </div>
       <footer><button id="cancelAdminUser" class="button quiet" type="button">取消</button><button id="submitAdminUser" class="button primary" type="submit">创建管理员账号</button></footer>
     </form>
@@ -213,7 +212,7 @@
     </section>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/assets/common.js?v=0.8.3"></script>
-  <script src="/assets/admin.js?v=0.8.3"></script>
+  <script src="/assets/common.js?v=0.8.7"></script>
+  <script src="/assets/admin.js?v=0.8.7"></script>
 </body>
 </html>

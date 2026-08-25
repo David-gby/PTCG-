@@ -99,7 +99,7 @@ else:
     from inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260823_inner_precision_v2"
+VERSION = "ptcg_outer_inner_pipeline_20260825_feedback_physical_v3"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
@@ -440,6 +440,13 @@ class PipelineModels:
     outer_line_gate: Path = PACKAGE_ROOT / "card_quality_processor" / "outer_line_gate.json"
     inner_yolo: Path = MODELS_DIR / "inner_frame_yolo_v3_base_candidate.pt"
     inner_refiner: Path = MODELS_DIR / "inner_frame_edge_refiner_v5_candidate.pt"
+    inner_refiner_horizontal: Path | None = field(
+        default_factory=lambda: (
+            MODELS_DIR / "inner_frame_edge_refiner_horizontal_v7.pt"
+            if (MODELS_DIR / "inner_frame_edge_refiner_horizontal_v7.pt").is_file()
+            else None
+        )
+    )
     inner_refiner_top_left: Path | None = field(
         default_factory=lambda: (
             MODELS_DIR / "inner_frame_edge_refiner_top_left.pt"
@@ -511,6 +518,8 @@ class CardFramePipeline:
         self._inner_yolo: YOLO | None = None
         self._inner_refiner: Any | None = None
         self._inner_refiner_config: dict[str, Any] | None = None
+        self._inner_refiner_horizontal: Any | None = None
+        self._inner_refiner_horizontal_config: dict[str, Any] | None = None
         self._inner_refiner_top_left: Any | None = None
         self._inner_refiner_top_left_config: dict[str, Any] | None = None
         self._inner_refiner_top: Any | None = None
@@ -645,6 +654,17 @@ class CardFramePipeline:
                 self.models.inner_refiner,
                 self.torch_device,
             )
+        if (
+            self.models.inner_refiner_horizontal is not None
+            and self._inner_refiner_horizontal is None
+        ):
+            (
+                self._inner_refiner_horizontal,
+                self._inner_refiner_horizontal_config,
+            ) = load_refiner(
+                self.models.inner_refiner_horizontal,
+                self.torch_device,
+            )
         if self.models.inner_refiner_top_left is not None and self._inner_refiner_top_left is None:
             self._inner_refiner_top_left, self._inner_refiner_top_left_config = load_refiner(
                 self.models.inner_refiner_top_left,
@@ -707,16 +727,27 @@ class CardFramePipeline:
         details: dict[str, dict[str, float | bool | str | None]] = {}
         for edge in EDGES:
             key = EDGE_TO_KEY[edge]
+            stable_model = self._inner_refiner
+            stable_config = self._inner_refiner_config
+            stable_variant = "stable_v5"
+            if (
+                edge in {"top", "bottom"}
+                and self._inner_refiner_horizontal is not None
+                and self._inner_refiner_horizontal_config is not None
+            ):
+                stable_model = self._inner_refiner_horizontal
+                stable_config = self._inner_refiner_horizontal_config
+                stable_variant = "horizontal_v7"
             stable_prediction = predict_edge(
-                self._inner_refiner,
+                stable_model,
                 rectified,
                 edge,
                 base_internal[key],
                 base_internal,
                 device=self.torch_device,
-                band_half=int(self._inner_refiner_config.get("band_half", 32)),
-                patch_width=int(self._inner_refiner_config.get("patch_width", 96)),
-                patch_height=int(self._inner_refiner_config.get("patch_height", 192)),
+                band_half=int(stable_config.get("band_half", 32)),
+                patch_width=int(stable_config.get("patch_width", 96)),
+                patch_height=int(stable_config.get("patch_height", 192)),
             )
             specialist_prediction = None
             if (
@@ -857,6 +888,7 @@ class CardFramePipeline:
                 "refiner_variant": (
                     "top_left_specialist" if use_top_left_specialist else "stable"
                 ),
+                "stable_refiner_variant": stable_variant,
                 "stable_confidence": round(stable_prediction.confidence, 4),
                 "specialist_confidence": (
                     round(specialist_prediction.confidence, 4)

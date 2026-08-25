@@ -36,6 +36,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate latest outer pipeline on frozen feedback.")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--outer-seg", type=Path, required=True)
+    parser.add_argument("--outer-pose", type=Path, default=None)
     parser.add_argument("--outer-line-refiner", type=Path, default=None)
     parser.add_argument("--outer-line-gate", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
@@ -54,7 +55,7 @@ def main() -> None:
     defaults = PipelineModels()
     models = PipelineModels(
         outer_seg=args.outer_seg.resolve(),
-        outer_pose=defaults.outer_pose,
+        outer_pose=(args.outer_pose.resolve() if args.outer_pose else defaults.outer_pose),
         outer_line_refiner=(
             args.outer_line_refiner.resolve()
             if args.outer_line_refiner
@@ -156,6 +157,9 @@ def main() -> None:
 
     report: dict[str, Any] = {
         "outer_seg": str(args.outer_seg.resolve()),
+        "outer_pose": (
+            str(args.outer_pose.resolve()) if args.outer_pose else str(defaults.outer_pose)
+        ),
         "outer_line_refiner": (
             str(args.outer_line_refiner.resolve())
             if args.outer_line_refiner

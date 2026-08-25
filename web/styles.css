@@ -174,6 +174,10 @@ button { color: inherit; }
 .editable .detect-line.vertical { width: var(--annotation-line-size, .8px); height: auto; transform: translateX(-50%); cursor: ew-resize; }
 .editable .detect-line.horizontal { width: auto; height: var(--annotation-line-size, .8px); transform: translateY(-50%); cursor: ns-resize; }
 .editable .detect-line.selected { background: #ff1720; box-shadow: 0 0 0 var(--annotation-halo-size, .35px) rgba(255,255,255,.92); }
+.fixed-inner-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.fixed-inner-overlay rect { fill: rgba(226, 69, 74, .025); stroke: var(--inner); stroke-width: var(--annotation-line-size, .8px); vector-effect: non-scaling-stroke; pointer-events: all; cursor: move; touch-action: none; }
+.fixed-inner-overlay rect:hover, .fixed-inner-overlay rect.selected { fill: rgba(226, 69, 74, .055); stroke: #ff1720; }
+.fixed-inner-editor:focus-visible { outline: 2px solid rgba(226, 69, 74, .38); outline-offset: -2px; }
 .line-legend { margin-top: 14px; display: flex; justify-content: center; flex-wrap: wrap; gap: 18px; color: var(--muted); font-size: 11px; }
 .line-legend span { display: flex; align-items: center; gap: 6px; }
 .legend-line { width: 16px; height: 2px; display: inline-block; }
@@ -277,6 +281,16 @@ legend, .field-label { margin: 0 0 9px; padding: 0; color: var(--muted); font-si
 .correction-row label { color: var(--muted); font-size: 12px; }
 .correction-row input[type="range"] { width: 100%; accent-color: var(--inner); }
 .correction-row input[type="number"] { width: 62px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; text-align: right; font-size: 12px; }
+.fixed-inner-controls { display: grid; gap: 10px; }
+.fixed-inner-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 11px; border: 1px solid #f0c8ca; border-radius: 8px; background: #fff7f7; }
+.fixed-inner-summary div, .fixed-inner-summary strong, .fixed-inner-summary span { display: block; }
+.fixed-inner-summary strong { color: #9e3035; font-size: 14px; }
+.fixed-inner-summary div span { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.fixed-inner-badge { flex: 0 0 auto; border-radius: 999px; padding: 4px 7px; background: #fbe4e5; color: #a3393e; font-size: 9px; font-weight: 750; }
+.fixed-inner-coordinate-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.fixed-inner-coordinate { display: grid; grid-template-columns: 1fr 62px; align-items: center; gap: 7px; min-width: 0; color: var(--muted); font-size: 10px; }
+.fixed-inner-coordinate input, .fixed-inner-coordinate output { box-sizing: border-box; width: 62px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; text-align: right; color: var(--text); background: #fff; font-size: 11px; }
+.fixed-inner-coordinate output { background: #f4f6f5; color: #68736f; }
 .textarea-field { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; }
 textarea { resize: vertical; min-height: 76px; border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; color: var(--text); font-weight: 400; outline: none; }
 textarea:focus, select:focus, input:focus { border-color: var(--accent); outline: 2px solid rgba(8, 123, 91, .12); }
