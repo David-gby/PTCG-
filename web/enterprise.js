@@ -567,15 +567,23 @@
     state.outerZoom?.setSourceSize(size);
     state.innerZoom?.setSourceSize({ width: 630, height: 880 });
     nodes.outerOverlay.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
+    const reasonCodes = Array.isArray(prediction.reason_codes) ? prediction.reason_codes : [];
+    const outerGeometryInvalid = reasonCodes.includes("INVALID_KEYPOINT_GEOMETRY");
+    const hasOuter = Boolean(prediction.outer_corners?.length === 4);
+    const usableOuter = Boolean(hasOuter && !outerGeometryInvalid);
     const polygon = nodes.outerOverlay.querySelector("polygon");
-    polygon.setAttribute("points", (prediction.outer_corners || []).map((point) => point.join(",")).join(" "));
+    polygon.setAttribute("points", usableOuter
+      ? prediction.outer_corners.map((point) => point.join(",")).join(" ")
+      : "");
     setResultImage(nodes.originalImage, resultImageUrl(inspection, "preview"));
     window.requestAnimationFrame(() => { state.outerZoom?.fit(); state.innerZoom?.fit(); });
-    $("outerDetectionState").textContent = prediction.outer_corners ? "已检测" : "检测失败";
-    $("outerDetectionState").className = prediction.outer_corners ? "detected" : "failed";
-    nodes.rectifiedStage.querySelectorAll("[data-edge]").forEach((line) => { line.hidden = Boolean(referenceView); });
     const hasInner = Boolean(centers && pair);
-    if (prediction.outer_corners) {
+    $("outerDetectionState").textContent = outerGeometryInvalid ? "候选无效" : usableOuter ? "已检测" : "检测失败";
+    $("outerDetectionState").className = usableOuter ? "detected" : "failed";
+    nodes.rectifiedStage.querySelectorAll("[data-edge]").forEach((line) => {
+      line.hidden = Boolean(referenceView || !hasInner);
+    });
+    if (usableOuter) {
       setResultImage(nodes.rectifiedImage, resultImageUrl(inspection, "rectified"));
     } else {
       nodes.rectifiedImage.dataset.cardscopeSource = "";

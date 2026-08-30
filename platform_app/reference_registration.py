@@ -67,8 +67,11 @@ def _pipeline() -> Any:
 
 def _decode_and_rectify(payload: bytes, code_prefix: str) -> tuple[np.ndarray, np.ndarray, dict]:
     _require_vision_runtime()
-    image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-    if image is None:
+    from ml_backend.ptcg_inference import decode_input_image
+
+    try:
+        image = decode_input_image(payload)
+    except ValueError:
         raise RegistrationInputError(f"{code_prefix}_IMAGE_UNREADABLE", "图片无法读取。")
     result = _pipeline().infer_image(image)
     rectified = result.get("_rectified_image")

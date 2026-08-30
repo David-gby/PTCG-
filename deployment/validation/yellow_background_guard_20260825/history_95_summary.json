@@ -1,0 +1,35 @@
+{
+  "policy": "outer_multicandidate_edge_border_v1",
+  "dataset": "C:\\Users\\admin\\Documents\\Codex\\2026-07-15\\qint\\CardScope_Training_Assets\\legacy_annotation_20260720\\training_history\\outer_seg_v6_frame34",
+  "split": "test",
+  "samples": 95,
+  "paired": 95,
+  "multi_candidate": 0,
+  "edge_evidence_used": 0,
+  "selection_changed": 0,
+  "improved": 0,
+  "regressed": 0,
+  "unchanged_within_0_1px": 95,
+  "legacy_error": {
+    "count": 95,
+    "mean": 5.596069491536993,
+    "median": 5.1554951667785645,
+    "p95": 10.879171657562255,
+    "max": 13.023506164550781
+  },
+  "guarded_error": {
+    "count": 95,
+    "mean": 5.596069491536993,
+    "median": 5.1554951667785645,
+    "p95": 10.879171657562255,
+    "max": 13.023506164550781
+  },
+  "delta_error": {
+    "count": 95,
+    "mean": 0.0,
+    "median": 0.0,
+    "p95": 0.0,
+    "max": 0.0
+  },
+  "changed_samples": []
+}

@@ -58,6 +58,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "conf_threshold": 0.20,
                 "candidate_area_weight": 0.40,
                 "candidate_aspect_weight": 0.25,
+                "candidate_edge_weight": 0.18,
+                "candidate_border_contact_penalty": 0.07,
+                "candidate_border_margin_ratio": 0.006,
+                "candidate_full_frame_exempt_area_ratio": 0.86,
                 "corner_calibration": {
                     "enabled": True,
                     "outward_canonical_px": 1.75,
@@ -72,6 +76,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
                     "max_pose_aspect_error": 0.20,
                     "legacy_model_path": "models/outer_seg_pre_frame2.pt",
                     "legacy_pose_area_tolerance": 0.20,
+                },
+                "invalid_primary_recovery": {
+                    "enabled": True,
+                    "legacy_model_path": "models/outer_seg_pre_frame2.pt",
+                    "min_confidence": 0.68,
+                    "max_aspect_error": 0.14,
+                    "min_area_ratio": 0.04,
+                    "max_area_ratio": 0.92,
                 },
             },
             "physical_edge_refinement": {

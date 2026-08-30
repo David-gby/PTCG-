@@ -402,12 +402,19 @@ class OuterPoseDetector:
         extracted = extract_silhouette_prediction(
             predictions[0],
             image_shape=image.shape,
+            image=image,
             target_aspect_ratio=float(self.config.get("card_aspect_ratio", 1.397)),
             aspect_ratio_tolerance=float(self.config.get("aspect_ratio_tolerance", 0.25)),
             min_area_ratio=float(self.config.get("min_area_ratio", 0.05)),
             max_area_ratio=float(self.config.get("max_area_ratio", 0.95)),
             area_weight=float(refinement.get("candidate_area_weight", 0.40)),
             aspect_weight=float(refinement.get("candidate_aspect_weight", 0.25)),
+            edge_weight=float(refinement.get("candidate_edge_weight", 0.18)),
+            border_contact_penalty=float(refinement.get("candidate_border_contact_penalty", 0.07)),
+            border_margin_ratio=float(refinement.get("candidate_border_margin_ratio", 0.006)),
+            full_frame_exempt_area_ratio=float(
+                refinement.get("candidate_full_frame_exempt_area_ratio", 0.86)
+            ),
         )
         if extracted is None:
             return None
@@ -432,6 +439,11 @@ class OuterPoseDetector:
                 "area_ratio": float(validation_metrics.get("area_ratio", 0.0)),
                 "silhouette_refinement_applied": False,
                 "silhouette_detected": True,
+                "silhouette_candidate_count": int(extracted.get("candidate_count", 1)),
+                "silhouette_selected_index": int(extracted.get("selected_index", 0)),
+                "silhouette_selection_score": float(extracted.get("selection_score", confidence)),
+                "silhouette_selection_audit": dict(extracted.get("selection_audit") or {}),
+                "silhouette_candidate_metrics": list(extracted.get("candidate_metrics") or []),
             }
             return self._failure(
                 code,
@@ -511,6 +523,8 @@ class OuterPoseDetector:
             "silhouette_candidate_count": int(extracted.get("candidate_count", 1)),
             "silhouette_selected_index": int(extracted.get("selected_index", 0)),
             "silhouette_selection_score": float(extracted.get("selection_score", confidence)),
+            "silhouette_selection_audit": dict(extracted.get("selection_audit") or {}),
+            "silhouette_candidate_metrics": list(extracted.get("candidate_metrics") or []),
             **edge_metrics,
         }
         keypoint_confidence = {
@@ -540,6 +554,107 @@ class OuterPoseDetector:
             return self.predict(image, conf=conf)
         finally:
             self._prefer_silhouette = prefer_silhouette
+
+    def _predict_legacy_silhouette(self, image: np.ndarray) -> dict[str, Any] | None:
+        """Run the frozen legacy silhouette as an independent failure expert."""
+        refinement = self.config.get("silhouette_refinement", {})
+        recovery = (
+            refinement.get("invalid_primary_recovery", {})
+            if isinstance(refinement, Mapping)
+            else {}
+        )
+        if not isinstance(recovery, Mapping) or not bool(recovery.get("enabled", False)):
+            return None
+        legacy_path = Path(str(recovery.get("legacy_model_path", "models/outer_seg_pre_frame2.pt")))
+        if not legacy_path.is_absolute() and not legacy_path.is_file():
+            legacy_path = Path(__file__).resolve().parents[1] / legacy_path
+        if not legacy_path.is_file():
+            return None
+        try:
+            legacy_model = self._load_silhouette_fallback_model(legacy_path)
+            primary_model = self._silhouette_model
+            self._silhouette_model = legacy_model
+            try:
+                return self._predict_silhouette(image)
+            finally:
+                self._silhouette_model = primary_model
+        except (ImportError, OSError, RuntimeError, ValueError):
+            return None
+
+    @staticmethod
+    def _recovery_score(result: Mapping[str, Any]) -> float:
+        metrics = result.get("metrics", {}) if isinstance(result.get("metrics"), Mapping) else {}
+        confidence = float(result.get("confidence", 0.0) or 0.0)
+        aspect_error = float(metrics.get("aspect_ratio_error", 1.0) or 1.0)
+        area_ratio = float(metrics.get("area_ratio", 0.0) or 0.0)
+        edge_support = float(metrics.get("edge_support_score", 0.0) or 0.0)
+        return confidence - 0.80 * aspect_error + 0.10 * min(area_ratio / 0.40, 1.0) + 0.12 * edge_support
+
+    def _recover_invalid_silhouette(
+        self,
+        image: np.ndarray,
+        primary: dict[str, Any],
+        conf: float,
+    ) -> dict[str, Any]:
+        """Recover a geometry-invalid primary mask without lowering geometry gates.
+
+        Repetitive or near-uniform mats can produce a very confident but
+        physically impossible mask.  The previous pipeline stopped at that
+        point.  This router keeps the strict geometry rejection and asks two
+        independent frozen experts (legacy segmentation and pose) for a valid
+        alternative instead.
+        """
+        if bool(primary.get("success")):
+            return primary
+        refinement = self.config.get("silhouette_refinement", {})
+        recovery = (
+            refinement.get("invalid_primary_recovery", {})
+            if isinstance(refinement, Mapping)
+            else {}
+        )
+        if not isinstance(recovery, Mapping) or not bool(recovery.get("enabled", False)):
+            return primary
+
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        legacy = self._predict_legacy_silhouette(image)
+        if legacy is not None and bool(legacy.get("success")):
+            metrics = legacy.get("metrics", {}) if isinstance(legacy.get("metrics"), Mapping) else {}
+            if (
+                float(legacy.get("confidence", 0.0) or 0.0) >= float(recovery.get("min_confidence", 0.68))
+                and float(metrics.get("aspect_ratio_error", 1.0) or 1.0)
+                <= float(recovery.get("max_aspect_error", 0.14))
+                and float(recovery.get("min_area_ratio", 0.04))
+                <= float(metrics.get("area_ratio", 0.0) or 0.0)
+                <= float(recovery.get("max_area_ratio", 0.92))
+            ):
+                candidates.append(("legacy_silhouette", legacy))
+
+        pose = self._predict_pose_only(image, conf)
+        if bool(pose.get("success")):
+            candidates.append(("pose", pose))
+        if not candidates:
+            return primary
+
+        source, selected = max(candidates, key=lambda item: self._recovery_score(item[1]))
+        metrics = dict(selected.get("metrics", {}))
+        metrics["invalid_primary_recovery"] = {
+            "version": "invalid_primary_recovery_20260829_v1",
+            "applied": True,
+            "selected_source": source,
+            "primary_error_code": primary.get("error_code"),
+            "primary_confidence": float(primary.get("confidence", 0.0) or 0.0),
+            "primary_metrics": dict(primary.get("metrics", {})),
+            "candidate_scores": {
+                name: round(self._recovery_score(candidate), 6)
+                for name, candidate in candidates
+            },
+        }
+        selected["metrics"] = metrics
+        selected["message"] = (
+            "Geometry-invalid primary silhouette replaced by the guarded "
+            f"{source.replace('_', ' ')} expert."
+        )
+        return selected
 
     def _replace_suspicious_silhouette(
         self,
@@ -631,7 +746,8 @@ class OuterPoseDetector:
         if self._prefer_silhouette:
             silhouette = self._predict_silhouette(image)
             if silhouette is not None:
-                return self._replace_suspicious_silhouette(image, silhouette, conf)
+                primary = self._replace_suspicious_silhouette(image, silhouette, conf)
+                return self._recover_invalid_silhouette(image, primary, conf)
         if not self.model_path.is_file():
             return self._failure(
                 "OUTER_POSE_MODEL_NOT_FOUND",

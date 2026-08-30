@@ -1,0 +1,35 @@
+{
+  "policy": "outer_multicandidate_edge_border_v1",
+  "dataset": "G:\\CardScope_Data\\server_training_pool_20260824\\outer_selected\\dataset_20260825\\outer_seg",
+  "split": "val",
+  "samples": 40,
+  "paired": 40,
+  "multi_candidate": 0,
+  "edge_evidence_used": 0,
+  "selection_changed": 0,
+  "improved": 0,
+  "regressed": 0,
+  "unchanged_within_0_1px": 40,
+  "legacy_error": {
+    "count": 40,
+    "mean": 4.6227777898311615,
+    "median": 4.2754387855529785,
+    "p95": 6.71842596530914,
+    "max": 11.411928176879883
+  },
+  "guarded_error": {
+    "count": 40,
+    "mean": 4.6227777898311615,
+    "median": 4.2754387855529785,
+    "p95": 6.71842596530914,
+    "max": 11.411928176879883
+  },
+  "delta_error": {
+    "count": 40,
+    "mean": 0.0,
+    "median": 0.0,
+    "p95": 0.0,
+    "max": 0.0
+  },
+  "changed_samples": []
+}

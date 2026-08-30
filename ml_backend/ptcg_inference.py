@@ -99,11 +99,155 @@ else:
     from inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260825_feedback_physical_v3"
+VERSION = "ptcg_outer_inner_pipeline_20260829_orientation_noise_robust_v1"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
 CARD_ASPECT_RATIO = 880.0 / 630.0
+
+
+def _outer_quad_is_landscape(points: Any) -> bool:
+    try:
+        quad = np.asarray(points, dtype=np.float32).reshape(4, 2)
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(quad).all():
+        return False
+    top = float(np.linalg.norm(quad[1] - quad[0]))
+    bottom = float(np.linalg.norm(quad[2] - quad[3]))
+    left = float(np.linalg.norm(quad[3] - quad[0]))
+    right = float(np.linalg.norm(quad[2] - quad[1]))
+    return (top + bottom) > (left + right) * 1.06
+
+
+def _inner_orientation_score(inner: Mapping[str, Any]) -> float:
+    if not bool(inner.get("success", False)):
+        return -1000.0
+    score = 10.0 + 2.0 * float(inner.get("yolo_confidence", 0.0) or 0.0)
+    quality = inner.get("quality_assessment", {})
+    quality = quality if isinstance(quality, Mapping) else {}
+    severity = str(quality.get("severity", "normal"))
+    score += {"normal": 3.0, "medium": 0.0, "high": -4.0}.get(severity, -1.0)
+    if bool(quality.get("review_recommended", False)):
+        score -= 2.0
+    refinement = inner.get("edge_refinement", {})
+    refinement = refinement if isinstance(refinement, Mapping) else {}
+    confidences = []
+    for edge in ("left", "right", "top", "bottom"):
+        detail = refinement.get(edge, {})
+        if isinstance(detail, Mapping) and detail.get("confidence") is not None:
+            confidences.append(float(detail["confidence"]))
+    if confidences:
+        score += 2.0 * float(np.mean(confidences))
+    physical = inner.get("physical_inner_prior", {})
+    physical = physical if isinstance(physical, Mapping) else {}
+    before = physical.get("before", {})
+    before = before if isinstance(before, Mapping) else {}
+    residual = before.get("residual_px", {})
+    residual = residual if isinstance(residual, Mapping) else {}
+    score -= 0.02 * (
+        abs(float(residual.get("width", 0.0) or 0.0))
+        + abs(float(residual.get("height", 0.0) or 0.0))
+    )
+    return float(score)
+
+
+def _inverse_map_rotated_outer_points(
+    points: Any,
+    *,
+    rotation: str,
+    original_shape: tuple[int, ...],
+) -> np.ndarray:
+    quad = np.asarray(points, dtype=np.float32).reshape(4, 2)
+    height, width = int(original_shape[0]), int(original_shape[1])
+    mapped = np.empty_like(quad)
+    if rotation == "cw90":
+        # Rotated coordinates are (H - 1 - y, x).
+        mapped[:, 0] = quad[:, 1]
+        mapped[:, 1] = float(height - 1) - quad[:, 0]
+    elif rotation == "ccw90":
+        # Rotated coordinates are (y, W - 1 - x).
+        mapped[:, 0] = float(width - 1) - quad[:, 1]
+        mapped[:, 1] = quad[:, 0]
+    else:
+        raise ValueError(f"Unsupported rotation: {rotation}")
+    return mapped
+
+
+def _recover_outer_from_quarter_turns(
+    detector: OuterPoseDetector,
+    image: np.ndarray,
+    config: Mapping[str, Any],
+    *,
+    conf: float,
+) -> dict[str, Any] | None:
+    """Retry strict outer detection after quarter turns and map it back.
+
+    This path is invoked only after the identity view fails.  It covers
+    genuinely sideways uploads that have no usable EXIF metadata, including
+    highly repetitive or near-uniform mats.  Every mapped candidate must pass
+    the same physical card geometry validation in original-image coordinates.
+    """
+    candidates: list[dict[str, Any]] = []
+    for name, code in (
+        ("cw90", cv2.ROTATE_90_CLOCKWISE),
+        ("ccw90", cv2.ROTATE_90_COUNTERCLOCKWISE),
+    ):
+        rotated = cv2.rotate(image, code)
+        prediction = detector.predict(rotated, conf=conf)
+        if not bool(prediction.get("success")) or prediction.get("points") is None:
+            continue
+        mapped = _inverse_map_rotated_outer_points(
+            prediction["points"],
+            rotation=name,
+            original_shape=image.shape,
+        )
+        validation = validate_and_order_outer_keypoints(
+            mapped,
+            prediction.get("keypoint_confidence"),
+            image.shape,
+            config,
+        )
+        ordered = validation.get("ordered_points")
+        if not bool(validation.get("success")) or ordered is None:
+            continue
+        metrics = dict(prediction.get("metrics", {}))
+        metrics.update(dict(validation.get("metrics", {})))
+        metrics["quarter_turn_recovery"] = {
+            "version": "outer_quarter_turn_recovery_20260829_v1",
+            "applied": True,
+            "selected_rotation": name,
+            "trigger": "identity_outer_failure",
+        }
+        points_array = np.asarray(ordered, dtype=np.float32)
+        candidate = dict(prediction)
+        candidate.update(
+            {
+                "success": True,
+                "points": points_array.tolist(),
+                "bbox": [
+                    float(points_array[:, 0].min()),
+                    float(points_array[:, 1].min()),
+                    float(points_array[:, 0].max()),
+                    float(points_array[:, 1].max()),
+                ],
+                "metrics": metrics,
+                "message": (
+                    "Outer card recovered from a guarded quarter-turn view "
+                    "and mapped back to original-image coordinates."
+                ),
+            }
+        )
+        candidates.append(candidate)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda item: (
+            float(item.get("confidence", 0.0) or 0.0)
+            - 0.8 * float(item.get("metrics", {}).get("aspect_ratio_error", 1.0) or 1.0)
+        ),
+    )
 
 
 def _configure_deterministic_inference() -> None:
@@ -132,6 +276,30 @@ def read_image(path: str | Path) -> np.ndarray:
     if image is None:
         raise ValueError(f"Cannot decode image: {path}")
     return image
+
+
+def decode_input_image(encoded: bytes | bytearray | memoryview | np.ndarray) -> np.ndarray:
+    """Decode uploads with EXIF orientation while preserving official PNG alpha.
+
+    ``IMREAD_UNCHANGED`` intentionally ignores JPEG EXIF orientation.  That
+    made portrait phone photos arrive as sideways raw pixels and was the main
+    cause of the apparent landscape-card regression.  Decode a second time in
+    color for ordinary images (OpenCV applies EXIF orientation there), while
+    retaining the unchanged BGRA result for transparent official PNG assets.
+    """
+    if isinstance(encoded, np.ndarray):
+        data = encoded.astype(np.uint8, copy=False).reshape(-1)
+    else:
+        data = np.frombuffer(encoded, dtype=np.uint8)
+    unchanged = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    if unchanged is None:
+        raise ValueError("Cannot decode image bytes")
+    if unchanged.ndim == 3 and unchanged.shape[2] == 4:
+        return unchanged
+    color = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if color is None:
+        raise ValueError("Cannot decode image bytes")
+    return color
 
 
 def write_image(path: str | Path, image: np.ndarray, quality: int = 94) -> Path:
@@ -447,6 +615,13 @@ class PipelineModels:
             else None
         )
     )
+    inner_refiner_top_stable: Path | None = field(
+        default_factory=lambda: (
+            MODELS_DIR / "inner_frame_edge_refiner_top_feedback_v8.pt"
+            if (MODELS_DIR / "inner_frame_edge_refiner_top_feedback_v8.pt").is_file()
+            else None
+        )
+    )
     inner_refiner_top_left: Path | None = field(
         default_factory=lambda: (
             MODELS_DIR / "inner_frame_edge_refiner_top_left.pt"
@@ -520,6 +695,8 @@ class CardFramePipeline:
         self._inner_refiner_config: dict[str, Any] | None = None
         self._inner_refiner_horizontal: Any | None = None
         self._inner_refiner_horizontal_config: dict[str, Any] | None = None
+        self._inner_refiner_top_stable: Any | None = None
+        self._inner_refiner_top_stable_config: dict[str, Any] | None = None
         self._inner_refiner_top_left: Any | None = None
         self._inner_refiner_top_left_config: dict[str, Any] | None = None
         self._inner_refiner_top: Any | None = None
@@ -647,6 +824,12 @@ class CardFramePipeline:
         return outer
 
     def _load_inner_models(self) -> None:
+        # Some offline evaluators construct a lightweight inference engine via
+        # ``__new__``.  Initialize newly introduced optional experts lazily so
+        # those production-equivalent evaluators remain compatible.
+        if not hasattr(self, "_inner_refiner_top_stable"):
+            self._inner_refiner_top_stable = None
+            self._inner_refiner_top_stable_config = None
         if self._inner_yolo is None:
             self._inner_yolo = YOLO(str(self.models.inner_yolo))
         if self._inner_refiner is None:
@@ -663,6 +846,17 @@ class CardFramePipeline:
                 self._inner_refiner_horizontal_config,
             ) = load_refiner(
                 self.models.inner_refiner_horizontal,
+                self.torch_device,
+            )
+        if (
+            self.models.inner_refiner_top_stable is not None
+            and self._inner_refiner_top_stable is None
+        ):
+            (
+                self._inner_refiner_top_stable,
+                self._inner_refiner_top_stable_config,
+            ) = load_refiner(
+                self.models.inner_refiner_top_stable,
                 self.torch_device,
             )
         if self.models.inner_refiner_top_left is not None and self._inner_refiner_top_left is None:
@@ -731,7 +925,15 @@ class CardFramePipeline:
             stable_config = self._inner_refiner_config
             stable_variant = "stable_v5"
             if (
-                edge in {"top", "bottom"}
+                edge == "top"
+                and self._inner_refiner_top_stable is not None
+                and self._inner_refiner_top_stable_config is not None
+            ):
+                stable_model = self._inner_refiner_top_stable
+                stable_config = self._inner_refiner_top_stable_config
+                stable_variant = "top_feedback_v8"
+            elif (
+                edge == "bottom"
                 and self._inner_refiner_horizontal is not None
                 and self._inner_refiner_horizontal_config is not None
             ):
@@ -984,6 +1186,70 @@ class CardFramePipeline:
         result["quality_assessment"] = assess_inner_quality(result)
         return result
 
+    def _infer_inner_orientation_aware(
+        self,
+        rectified: np.ndarray,
+        *,
+        refinement_image: np.ndarray | None,
+        trusted_outer: bool,
+        landscape_source: bool,
+    ) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any], dict[str, Any]]:
+        """Resolve the 180-degree ambiguity introduced by landscape capture.
+
+        A landscape quadrilateral can be mapped into portrait coordinates in
+        two equally valid ways.  The former pipeline always chose one of them,
+        so cards photographed with the opposite long-edge direction reached
+        the inner detector upside down.  Evaluate the two canonical choices
+        only for landscape source geometry and retain the better physically
+        supported inner-frame solution.
+        """
+        identity = self._infer_inner(
+            rectified,
+            refinement_image=refinement_image,
+            trusted_outer=trusted_outer,
+        )
+        identity_score = _inner_orientation_score(identity)
+        audit: dict[str, Any] = {
+            "version": "landscape_orientation_router_20260829_v1",
+            "landscape_source": bool(landscape_source),
+            "evaluated_both_directions": False,
+            "selected": "identity",
+            "identity_score": round(identity_score, 6),
+            "rotate_180_score": None,
+            "score_margin": None,
+        }
+        if not landscape_source:
+            return rectified, refinement_image, identity, audit
+
+        rotated = cv2.rotate(rectified, cv2.ROTATE_180)
+        rotated_refinement = (
+            cv2.rotate(refinement_image, cv2.ROTATE_180)
+            if refinement_image is not None
+            else None
+        )
+        alternate = self._infer_inner(
+            rotated,
+            refinement_image=rotated_refinement,
+            trusted_outer=trusted_outer,
+        )
+        alternate_score = _inner_orientation_score(alternate)
+        margin = alternate_score - identity_score
+        audit.update(
+            {
+                "evaluated_both_directions": True,
+                "rotate_180_score": round(alternate_score, 6),
+                "score_margin": round(margin, 6),
+            }
+        )
+        # Keep the established mapping on an effective tie.  A small margin
+        # prevents image noise from flipping otherwise equivalent results.
+        if bool(alternate.get("success")) and (
+            not bool(identity.get("success")) or margin > 0.25
+        ):
+            audit["selected"] = "rotate_180"
+            return rotated, rotated_refinement, alternate, audit
+        return rectified, refinement_image, identity, audit
+
     def infer_image(self, image_bgr: np.ndarray) -> dict[str, Any]:
         if not isinstance(image_bgr, np.ndarray) or image_bgr.size == 0:
             return {
@@ -1007,6 +1273,25 @@ class CardFramePipeline:
             outer = _official_full_frame_outer(image_bgr, input_profile)
         else:
             outer = self.outer_detector.predict(image_bgr, conf=0.25)
+            if not outer.get("success"):
+                quarter_turn = _recover_outer_from_quarter_turns(
+                    self.outer_detector,
+                    image_bgr,
+                    self.outer_config,
+                    conf=0.25,
+                )
+                if quarter_turn is not None:
+                    original_failure = {
+                        "error_code": outer.get("error_code"),
+                        "confidence": float(outer.get("confidence", 0.0) or 0.0),
+                        "metrics": dict(outer.get("metrics", {})),
+                    }
+                    quarter_metrics = dict(quarter_turn.get("metrics", {}))
+                    recovery = dict(quarter_metrics.get("quarter_turn_recovery", {}))
+                    recovery["identity_failure"] = original_failure
+                    quarter_metrics["quarter_turn_recovery"] = recovery
+                    quarter_turn["metrics"] = quarter_metrics
+                    outer = quarter_turn
             if not outer.get("success") and outer.get("points") is not None:
                 outer = recover_boundary_contact_outer(
                     image_bgr,
@@ -1087,11 +1372,29 @@ class CardFramePipeline:
                 )
                 if highres_result.get("success"):
                     highres_rectified = highres_result.get("rectified_image")
-        inner = self._infer_inner(
-            rectified,
-            refinement_image=highres_rectified,
-            trusted_outer=trusted_outer,
+        landscape_source = _outer_quad_is_landscape(outer["points"])
+        rectified, highres_rectified, inner, orientation_audit = (
+            self._infer_inner_orientation_aware(
+                rectified,
+                refinement_image=highres_rectified,
+                trusted_outer=trusted_outer,
+                landscape_source=landscape_source,
+            )
         )
+        rectification["orientation_normalization"] = orientation_audit
+        if orientation_audit.get("selected") == "rotate_180":
+            homography = np.asarray(rectification.get("homography"), dtype=np.float64)
+            if homography.shape == (3, 3) and np.isfinite(homography).all():
+                height, width = rectified.shape[:2]
+                rotate_180 = np.asarray(
+                    [[-1.0, 0.0, width - 1.0], [0.0, -1.0, height - 1.0], [0.0, 0.0, 1.0]],
+                    dtype=np.float64,
+                )
+                rectification["homography"] = (rotate_180 @ homography).tolist()
+            rectification["message"] = (
+                "Perspective rectification completed; landscape orientation "
+                "was normalized by the guarded inner-frame evidence router."
+            )
         if not inner.get("success"):
             return {
                 "success": False,
@@ -1171,6 +1474,14 @@ class CardFramePipeline:
                 )
                 if confirmed_highres_result.get("success"):
                     confirmed_highres = confirmed_highres_result.get("rectified_image")
+                    if (
+                        confirmed_highres is not None
+                        and orientation_audit.get("selected") == "rotate_180"
+                    ):
+                        confirmed_highres = cv2.rotate(
+                            confirmed_highres,
+                            cv2.ROTATE_180,
+                        )
             confirmed_inner = self._infer_inner(
                 rectified,
                 refinement_image=confirmed_highres,
@@ -1234,7 +1545,10 @@ class CardFramePipeline:
             encoded = np.fromfile(str(image_path), dtype=np.uint8)
         except OSError as exc:
             raise ValueError(f"Cannot read image file: {image_path}") from exc
-        image = cv2.imdecode(encoded, cv2.IMREAD_UNCHANGED)
+        try:
+            image = decode_input_image(encoded)
+        except ValueError:
+            image = None
         if image is None or image.ndim != 3 or image.shape[2] not in (3, 4):
             raise ValueError(f"Cannot decode image: {image_path}")
         result = self.infer_image(image)

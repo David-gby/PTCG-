@@ -392,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patch-width", type=int, default=96)
     parser.add_argument("--patch-height", type=int, default=256)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--balance-sources", action="store_true")
     parser.add_argument("--feedback-repeat", type=int, default=1)
     parser.add_argument("--left-repeat", type=int, default=1)
@@ -514,8 +515,25 @@ def main(argv: list[str] | None = None) -> int:
         sample_order="row_block",
         edge_repeats=None,
     )
-    train_loader = DataLoader(train_dataset, batch_size=args.batch, shuffle=False, num_workers=0, pin_memory=amp)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch, shuffle=False, num_workers=0, pin_memory=amp)
+    workers = max(0, int(args.workers))
+    loader_options = {
+        "num_workers": workers,
+        "pin_memory": amp,
+    }
+    if workers > 0:
+        loader_options.update({"prefetch_factor": 2})
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch,
+        shuffle=False,
+        **loader_options,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch,
+        shuffle=False,
+        **loader_options,
+    )
 
     if args.architecture == "v5":
         model: torch.nn.Module = EdgeRefinerV5(input_channels=input_channels).to(device)

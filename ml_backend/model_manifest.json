@@ -1,18 +1,19 @@
 {
-  "package_version": "2026-08-25-feedback-physical-v3",
-  "pipeline_version": "ptcg_outer_inner_pipeline_20260825_feedback_physical_v3",
+  "package_version": "2026-08-29-orientation-noise-robust-v1",
+  "pipeline_version": "ptcg_outer_inner_pipeline_20260829_orientation_noise_robust_v1",
   "feedback_schema_version": "1.0",
   "promotion_policy": {
     "outer_model_replaced": true,
     "inner_refiner_replaced": true,
     "weight_change": true,
-    "data_policy": "35,186 decoded official card images were catalogued by set/group and split without exact-hash or group leakage. Official pseudo-labels were admitted only after multi-method geometric consensus. These data were combined with manual historical and server-feedback annotations; official training rows were capped and manual validation/test rows remained untouched.",
+    "data_policy": "35,186 decoded official card images remain catalogued by set/group without exact-hash or group leakage. The 2026-08-29 server snapshot contains 1,680 approved training-pool annotations, including 523 newly completed feedback samples; these were combined with historical manually reviewed data and split by source group. Manual validation/test rows remained untouched, and only a blind-test-positive top-edge checkpoint was promoted.",
     "outer_strategy": "Official-corpus silhouette segmentation is blended 75% with the feedback/history production model, followed by a seven-channel high-resolution four-side line refiner. A 0.75 canonical-pixel outward safety margin reduces card cropping. Full-resolution physical snapping and the legacy low-confidence silhouette fallback are disabled for this production route because locked replay showed that they can snap to gray shadows, slabs, sleeves, or texture instead of the physical card edge.",
-    "outer_fallback": "Geometry validation and explicit review routing remain active. Segmentation confidence is 0.20, corner calibration is enabled with a validation-selected 1.75 canonical-pixel outward correction, and unresolved geometry is not hidden by an unconditional rescue. The pipeline now forces the configured pose/segmentation paths after normalization, preventing a shallow configuration merge from silently restoring an older default model.",
+    "outer_fallback": "Geometry validation and explicit review routing remain active. JPEG/TIFF input decoding applies EXIF orientation before inference while alpha-bearing official PNG assets retain BGRA. If an identity-view outer prediction fails strict geometry, the same detector is tried at both quarter turns; only a candidate that passes the original-coordinate physical geometry gate is mapped back and admitted. Unresolved geometry is never hidden by an unconditional rescue.",
+    "outer_candidate_strategy": "When outer segmentation returns multiple valid masks, the deployed area/aspect/confidence ranking is preserved unless a non-full-frame candidate touches the source-image boundary. Only in that guarded ambiguity state, four-side edge evidence and a per-contact boundary penalty suppress large repetitive or near-uniform background masks. If the primary segmentation is geometrically invalid, a frozen legacy silhouette expert and pose expert may recover it only after the same aspect/area/confidence gates. Near-full-frame enterprise crops are exempt, and valid single-candidate behavior is unchanged.",
     "pre_cropped_strategy": "A normal outer prediction that already fills at least 96.5% of both dimensions, has at most 2.5% border margins and matches 63:88 within 2.5% confirms a trusted enterprise crop. Detector failures retain the older provisional path and must first pass independent inner-frame confirmation. Only these trusted routes and official full-frame assets can enable strong physical inner refinement; ordinary photos remain conservative.",
     "physical_inner_strategy": "All layouts use the enterprise-confirmed 58x83 mm printed-line inner edge inside the 63x88 mm physical card. For independently trusted outer crops, the learned YOLO/refiner ensemble estimates the inner-frame centre and a high-resolution paired-edge stage locks the opposite-edge spans to the physical dimensions. Validation rejected free gradient-based centre movement because artwork can attract it; long-edge evidence is retained as an audit signal. Untrusted historical photos keep the previous guarded vertical-only soft correction and review routing.",
     "official_reference_inner_strategy": "When the linked official card image is available, SIFT/AKAZE RANSAC, phase correlation and ECC provide an independent subpixel printed-content translation. That translation is fused with the 58x83 mm span to emit a second reference_fused_inner_frame estimate and quality audit without replacing the learned result silently.",
-    "inner_strategy": "A mixed-expert inner-frame stage keeps the historically stable V5 model for left/right edges and uses the new 1,080-sample feedback-trained V7 expert for top/bottom edges. A conservative V6 top-edge specialist remains gated for title/logo interference. High-resolution paired evidence is preferred; when exactly one horizontal or vertical printed inner edge is trustworthy, the opposite edge is inferred from the enterprise-confirmed fixed 580x830 canonical inner-edge span. Conflicting or weak anchors fall back to the learned centre and are review-routed rather than forced.",
+    "inner_strategy": "A mixed-expert inner-frame stage keeps the historically stable V5 model for left/right edges and the V7 expert for the bottom edge. The top edge uses feedback V8 trained from the combined historical and 1,680-sample server pool because it reduced isolated blind-test top MAE by 13.4% and top P95 by 28.4%; the longer stage-2 checkpoint was rejected for overfit. A conservative V6 specialist remains gated for title/logo interference. Landscape source geometry evaluates rectified identity and 180-degree views and selects only with a quality-score margin. One trustworthy edge can still infer its opposite from the fixed 580x830 inner-edge span.",
     "rejected_experiments": [
       "A second directed V5 fine-tune improved feedback metrics but regressed the historical test set, so it was not promoted.",
       "Adaptive photometric rescue changed no coordinates in the new candidate and increased latency, so it remains disabled.",
@@ -170,6 +171,36 @@
       ,"outer_history_joint_candidate_final_mean_px_20260825": 4.6802592654
       ,"outer_history_current_final_mean_px_20260825": 4.4806
       ,"outer_feedback_20260825_promoted": false
+      ,"yellow_background_failure_recovered_20260825": true
+      ,"yellow_background_candidate_margin_before_20260825": 0.0033071017
+      ,"yellow_background_candidate_margin_after_20260825": 0.1433071017
+      ,"yellow_background_pipeline_complete_after_20260825": true
+      ,"yellow_background_history_regression_samples_20260825": 95
+      ,"yellow_background_feedback_regression_samples_20260825": 40
+      ,"yellow_background_official_regression_samples_20260825": 400
+      ,"yellow_background_total_regressions_20260825": 0
+      ,"server_training_pool_total_20260829": 1680
+      ,"server_training_pool_new_approved_20260829": 523
+      ,"server_training_pool_new_landscape_20260829": 63
+      ,"server_training_pool_new_inner_corrected_20260829": 489
+      ,"server_training_pool_new_outer_corrected_20260829": 515
+      ,"inner_blind_validation_test_samples_20260829": 534
+      ,"inner_full_pipeline_success_20260829": 534
+      ,"inner_full_pipeline_mean_px_before_20260829": 1.8392303
+      ,"inner_full_pipeline_mean_px_after_20260829": 1.8228689
+      ,"inner_full_pipeline_p95_px_before_20260829": 5.6734384
+      ,"inner_full_pipeline_p95_px_after_20260829": 5.5350376
+      ,"inner_top_mean_px_before_20260829": 1.8457761
+      ,"inner_top_mean_px_after_20260829": 1.7816694
+      ,"inner_top_signed_bias_px_before_20260829": -0.407877
+      ,"inner_top_signed_bias_px_after_20260829": -0.380109
+      ,"inner_review_rate_before_20260829": 0.157303
+      ,"inner_review_rate_after_20260829": 0.157303
+      ,"orientation_noise_problem_samples_complete_20260829": "3/3"
+      ,"raw_sideways_exif_ignored_recovery_complete_20260829": true
+      ,"raw_sideways_recovery_selected_rotation_20260829": "cw90"
+      ,"unit_regressions_unittest_20260829": 30
+      ,"unit_regressions_zero_argument_20260829": 8
     }
   },
   "models": [
@@ -235,6 +266,13 @@
       "architecture": "PyTorch seven-channel segmented V6 top-edge strip refiner",
       "size_bytes": 3062557,
       "sha256": "FAE0E64F89809D962941F732F2A7DC74CB0A4CF55E8FD8E828493B7D01127666"
+    },
+    {
+      "file": "models/inner_frame_edge_refiner_top_feedback_v8.pt",
+      "role": "Stable top-edge expert trained from combined historical and 1,680-sample approved server feedback pool",
+      "architecture": "PyTorch seven-channel V5 edge-strip refiner with grouped train/validation/test splits",
+      "size_bytes": 3058457,
+      "sha256": "5CD7384BCB3E296C8AAF4737674274D766049852FB8193D0E726A8D1A9DF5BC2"
     }
   ]
 }
