@@ -61,6 +61,11 @@ if __package__:
     from .inner_frame.physical_inner_prior import guarded_refine_physical_inner_box
     from .inner_frame.joint_physical_refiner import refine_trusted_inner_box
     from .inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
+    from .orientation_classifier import (
+        load_orientation_classifier,
+        predict_upright_probability,
+        predict_text_upright_probability,
+    )
 else:
     from boundary_quality_guard import assess_inner_quality, assess_outer_quality
     from card_quality_processor.config import DEFAULT_CONFIG, normalize_config
@@ -97,9 +102,14 @@ else:
     from inner_frame.physical_inner_prior import guarded_refine_physical_inner_box
     from inner_frame.joint_physical_refiner import refine_trusted_inner_box
     from inner_frame.stabilize_inner_frame_box import stabilize_inner_frame_box
+    from orientation_classifier import (
+        load_orientation_classifier,
+        predict_upright_probability,
+        predict_text_upright_probability,
+    )
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260829_orientation_noise_robust_v1"
+VERSION = "ptcg_outer_inner_pipeline_20260903_inner_standard_v1"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
@@ -706,6 +716,17 @@ class CardFramePipeline:
         self._physical_inner_prior = json.loads(
             self.models.inner_physical_prior.read_text(encoding="utf-8")
         )
+        self._orientation_model: Any | None = None
+        orientation_path = MODELS_DIR / "orientation_classifier_v5.pt"
+        if orientation_path.is_file():
+            try:
+                self._orientation_model = load_orientation_classifier(
+                    orientation_path, self.torch_device
+                )
+            except Exception:
+                self._orientation_model = None
+        self._text_direction_model: Any | None = None
+        self._text_direction_model = None
 
     def _load_outer_line_model(self) -> None:
         if self._outer_line_refiner is None:
@@ -1135,6 +1156,40 @@ class CardFramePipeline:
             evidence_provider=physical_evidence_provider,
         )
         final = _clip_box(physical_prior["box"], width, height)
+        anchor_cfg = self._physical_inner_prior.get("top_unreliable_bottom_anchor", {})
+        if bool(anchor_cfg.get("enabled", False)):
+            top_detail = details.get("top", {})
+            bottom_detail = details.get("bottom", {})
+            top_unreliable = bool(
+                not top_detail.get("accepted", True)
+                or float(top_detail.get("confidence", 1.0))
+                < float(anchor_cfg.get("trigger_min_confidence", 0.50))
+            )
+            bottom_reliable = bool(
+                bottom_detail.get("accepted", True)
+                and float(bottom_detail.get("confidence", 0.0))
+                >= float(anchor_cfg.get("bottom_min_confidence", 0.50))
+                and float(bottom_detail.get("peak_mass", 0.0))
+                >= float(anchor_cfg.get("bottom_min_peak_mass", 0.65))
+                and float(bottom_detail.get("entropy", 1.0))
+                <= float(anchor_cfg.get("bottom_max_entropy", 0.60))
+            )
+            if top_unreliable and bottom_reliable:
+                expected_height = float(height) * float(
+                    self._physical_inner_prior.get("inner_height_mm", 83.0)
+                ) / float(self._physical_inner_prior.get("outer_height_mm", 88.0))
+                anchor_top = float(final["bottom"]) - expected_height
+                move_px = anchor_top - float(final["top"])
+                if abs(move_px) <= float(anchor_cfg.get("max_move_px", 24.0)):
+                    final["top"] = float(np.clip(anchor_top, 0.0, float(height) - 2.0))
+                    physical_prior = {
+                        **physical_prior,
+                        "top_unreliable_bottom_anchor": {
+                            "applied": True,
+                            "move_px": round(move_px, 4),
+                            "reason": "top_unreliable_bottom_reliable",
+                        },
+                    }
         trusted_joint = refine_trusted_inner_box(
             refinement_image if refinement_image is not None else rectified,
             final,
@@ -1220,6 +1275,74 @@ class CardFramePipeline:
         }
         if not landscape_source:
             return rectified, refinement_image, identity, audit
+
+        if self._text_direction_model is not None:
+            text_p, n_strips = predict_text_upright_probability(
+                self._text_direction_model,
+                rectified,
+                self.torch_device,
+            )
+            if n_strips >= 3 and text_p is not None and abs(text_p - 0.5) >= 0.25:
+                audit["version"] = "landscape_orientation_router_20260829_v3"
+                audit["text_direction"] = {
+                    "used": True,
+                    "p_upright": round(text_p, 6),
+                    "strips": n_strips,
+                }
+                should_rotate = text_p < 0.5
+                if should_rotate:
+                    rotated = cv2.rotate(rectified, cv2.ROTATE_180)
+                    rotated_refinement = (
+                        cv2.rotate(refinement_image, cv2.ROTATE_180)
+                        if refinement_image is not None
+                        else None
+                    )
+                    alternate = self._infer_inner(
+                        rotated,
+                        refinement_image=rotated_refinement,
+                        trusted_outer=trusted_outer,
+                    )
+                    if bool(alternate.get("success")):
+                        audit["selected"] = "rotate_180"
+                        return rotated, rotated_refinement, alternate, audit
+                audit["selected"] = "identity"
+                return rectified, refinement_image, identity, audit
+            else:
+                audit["text_direction"] = {"used": False, "strips": n_strips}
+
+        if self._orientation_model is not None:
+            p_upright = predict_upright_probability(
+                self._orientation_model,
+                rectified,
+                self.torch_device,
+            )
+            orientation_confidence = 2.0 * abs(p_upright - 0.5)
+            audit["version"] = "landscape_orientation_router_20260829_v2"
+            audit["orientation_classifier"] = {
+                "used": False,
+                "p_upright": round(p_upright, 6),
+                "confidence": round(orientation_confidence, 6),
+            }
+            if orientation_confidence >= 0.0:
+                audit["orientation_classifier"]["used"] = True
+                should_rotate = p_upright < 0.5
+                if should_rotate:
+                    rotated = cv2.rotate(rectified, cv2.ROTATE_180)
+                    rotated_refinement = (
+                        cv2.rotate(refinement_image, cv2.ROTATE_180)
+                        if refinement_image is not None
+                        else None
+                    )
+                    alternate = self._infer_inner(
+                        rotated,
+                        refinement_image=rotated_refinement,
+                        trusted_outer=trusted_outer,
+                    )
+                    if bool(alternate.get("success")):
+                        audit["selected"] = "rotate_180"
+                        return rotated, rotated_refinement, alternate, audit
+                audit["selected"] = "identity"
+                return rectified, refinement_image, identity, audit
 
         rotated = cv2.rotate(rectified, cv2.ROTATE_180)
         rotated_refinement = (

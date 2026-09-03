@@ -1,0 +1,24 @@
+请部署 CardScope v0.9.2（9.2 测试问题修复版）。
+
+相对 v0.9.0 的改动：
+1. 标注后台外框调整绿线在任意缩放下保持恒定粗细（纯前端）。
+2. 上内框：当上边不可靠/疑似遮挡时，用"下边 + 标准内框高(830px)"锚定上边，修复训练家卡上边比例错误。
+3. 横卡方向：新增上下方向分类器，修复横卡 90° 后可能上下颠倒的问题（倒置率约 50% → 32.3%）。
+4. 标准内框：测量端改为强制内框符合 580×830 px 物理标准，
+   修复"测量端与标注端内框不一致、测量端上下居中度超标准"的问题。
+
+必须保留服务器已有的 platform_workspace、数据库、企业上传图片、账号信息、
+训练池数据、环境变量和反向代理配置。
+
+必须执行：
+1. 备份当前 cardscope 项目目录和服务器 platform_workspace。
+2. 解压后覆盖 cardscope 同名代码文件，并保留/新增：
+   ml_backend/models/orientation_classifier_v5.pt
+   ml_backend/orientation_classifier.py
+3. 不要用压缩包中的空目录替换服务器 platform_workspace，也不要删除数据库和图片卷。
+4. 重启 CardScope Web/Worker 服务。
+5. 检查 health 接口 release_version=0.9.2。
+6. 新检测结果 model_version=ptcg_outer_inner_pipeline_20260903_inner_standard_v1。
+7. 重新上传横卡、训练家卡、以及内框超标准的卡测试图确认修复效果。
+
+详细变更：DEPLOYMENT_CHANGESET_20260903_FIXES.md

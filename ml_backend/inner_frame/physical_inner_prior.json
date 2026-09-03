@@ -19,13 +19,21 @@
   },
   "vertical": {
     "correction_enabled": true,
-    "threshold_px": 12.0,
+    "threshold_px": 3.5,
     "max_residual_px": 32.0,
-    "alpha": 0.10,
+    "alpha": 0.90,
     "first_share": 0.50,
     "max_visual_score_drop": 0.10,
     "max_support_drop": 1,
     "min_candidate_support": 4
+  },
+  "top_unreliable_bottom_anchor": {
+    "enabled": true,
+    "trigger_min_confidence": 0.50,
+    "bottom_min_confidence": 0.50,
+    "bottom_min_peak_mass": 0.65,
+    "bottom_max_entropy": 0.60,
+    "max_move_px": 24.0
   },
   "trusted_joint": {
     "enabled": true,
