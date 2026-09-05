@@ -29,8 +29,9 @@
   },
   "top_unreliable_bottom_anchor": {
     "enabled": true,
+    "anchor_on_bottom_only": true,
     "trigger_min_confidence": 0.50,
-    "bottom_min_confidence": 0.50,
+    "bottom_min_confidence": 0.45,
     "bottom_min_peak_mass": 0.65,
     "bottom_max_entropy": 0.60,
     "max_move_px": 24.0

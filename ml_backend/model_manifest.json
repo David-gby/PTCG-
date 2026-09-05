@@ -1,6 +1,6 @@
 {
   "package_version": "2026-08-29-orientation-noise-robust-v1",
-  "pipeline_version": "ptcg_outer_inner_pipeline_20260829_orientation_noise_robust_v1",
+  "pipeline_version": "ptcg_outer_inner_pipeline_20260905_inner_anchor_v1",
   "feedback_schema_version": "1.0",
   "promotion_policy": {
     "outer_model_replaced": true,

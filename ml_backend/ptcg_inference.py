@@ -109,7 +109,7 @@ else:
     )
 
 
-VERSION = "ptcg_outer_inner_pipeline_20260903_inner_standard_v1"
+VERSION = "ptcg_outer_inner_pipeline_20260905_inner_anchor_v1"
 TOP_LEFT_SPECIALIST_EDGES = frozenset({"left", "top"})
 TOP_LEFT_SPECIALIST_MIN_CONFIDENCE = 0.52
 TOP_LEFT_SPECIALIST_CONFIDENCE_MARGIN = 0.06
@@ -1174,7 +1174,12 @@ class CardFramePipeline:
                 and float(bottom_detail.get("entropy", 1.0))
                 <= float(anchor_cfg.get("bottom_max_entropy", 0.60))
             )
-            if top_unreliable and bottom_reliable:
+            # "anchor_on_bottom_only" (default False): when True, anchor the top
+            # edge from the trusted bottom edge regardless of the top edge's own
+            # acceptance/confidence. This recovers cards where the top edge is
+            # confidently detected but wrong (common for trainer/supporter cards).
+            anchor_on_bottom_only = bool(anchor_cfg.get("anchor_on_bottom_only", False))
+            if bottom_reliable and (anchor_on_bottom_only or top_unreliable):
                 expected_height = float(height) * float(
                     self._physical_inner_prior.get("inner_height_mm", 83.0)
                 ) / float(self._physical_inner_prior.get("outer_height_mm", 88.0))
@@ -1187,7 +1192,11 @@ class CardFramePipeline:
                         "top_unreliable_bottom_anchor": {
                             "applied": True,
                             "move_px": round(move_px, 4),
-                            "reason": "top_unreliable_bottom_reliable",
+                            "reason": (
+                                "bottom_reliable_anchor_bottom_only"
+                                if anchor_on_bottom_only
+                                else "top_unreliable_bottom_reliable"
+                            ),
                         },
                     }
         trusted_joint = refine_trusted_inner_box(
